@@ -14,16 +14,257 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      profiles: {
+        Row: {
+          created_at: string
+          display_name: string | null
+          email: string | null
+          id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          display_name?: string | null
+          email?: string | null
+          id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string | null
+          email?: string | null
+          id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      readings: {
+        Row: {
+          id: number
+          meter_id: string
+          recorded_at: string
+          site_id: string
+          value: number
+        }
+        Insert: {
+          id?: number
+          meter_id: string
+          recorded_at?: string
+          site_id: string
+          value: number
+        }
+        Update: {
+          id?: number
+          meter_id?: string
+          recorded_at?: string
+          site_id?: string
+          value?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "readings_meter_id_fkey"
+            columns: ["meter_id"]
+            isOneToOne: false
+            referencedRelation: "site_meters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "readings_site_id_fkey"
+            columns: ["site_id"]
+            isOneToOne: false
+            referencedRelation: "sites"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      site_api_keys: {
+        Row: {
+          created_at: string
+          id: string
+          key_hash: string
+          key_prefix: string
+          label: string | null
+          last_used_at: string | null
+          revoked: boolean
+          site_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          key_hash: string
+          key_prefix: string
+          label?: string | null
+          last_used_at?: string | null
+          revoked?: boolean
+          site_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          key_hash?: string
+          key_prefix?: string
+          label?: string | null
+          last_used_at?: string | null
+          revoked?: boolean
+          site_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "site_api_keys_site_id_fkey"
+            columns: ["site_id"]
+            isOneToOne: false
+            referencedRelation: "sites"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      site_meters: {
+        Row: {
+          capacity: number | null
+          created_at: string
+          device_key: string
+          id: string
+          low_threshold: number | null
+          meter_type: Database["public"]["Enums"]["meter_type"]
+          name: string
+          position: number
+          site_id: string
+          unit: string
+        }
+        Insert: {
+          capacity?: number | null
+          created_at?: string
+          device_key: string
+          id?: string
+          low_threshold?: number | null
+          meter_type: Database["public"]["Enums"]["meter_type"]
+          name: string
+          position?: number
+          site_id: string
+          unit?: string
+        }
+        Update: {
+          capacity?: number | null
+          created_at?: string
+          device_key?: string
+          id?: string
+          low_threshold?: number | null
+          meter_type?: Database["public"]["Enums"]["meter_type"]
+          name?: string
+          position?: number
+          site_id?: string
+          unit?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "site_meters_site_id_fkey"
+            columns: ["site_id"]
+            isOneToOne: false
+            referencedRelation: "sites"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      site_operators: {
+        Row: {
+          created_at: string
+          id: string
+          site_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          site_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          site_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "site_operators_site_id_fkey"
+            columns: ["site_id"]
+            isOneToOne: false
+            referencedRelation: "sites"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sites: {
+        Row: {
+          created_at: string
+          id: string
+          location: string | null
+          low_chemical_threshold_pct: number
+          name: string
+          timezone: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          location?: string | null
+          low_chemical_threshold_pct?: number
+          name: string
+          timezone?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          location?: string | null
+          low_chemical_threshold_pct?: number
+          name?: string
+          timezone?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      can_access_site: {
+        Args: { _site_id: string; _user_id: string }
+        Returns: boolean
+      }
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "operator"
+      meter_type: "wash" | "fresh_water" | "chemical"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +391,9 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "operator"],
+      meter_type: ["wash", "fresh_water", "chemical"],
+    },
   },
 } as const
