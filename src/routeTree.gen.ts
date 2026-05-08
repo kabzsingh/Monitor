@@ -13,6 +13,7 @@ import { Route as SignupRouteImport } from './routes/signup'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AuthenticatedReportsRouteImport } from './routes/_authenticated/reports'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
 import { Route as ApiPublicIngestRouteImport } from './routes/api/public/ingest'
@@ -36,6 +37,11 @@ const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AuthenticatedReportsRoute = AuthenticatedReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
+  getParentRoute: () => AuthenticatedRoute,
 } as any)
 const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
   id: '/dashboard',
@@ -65,6 +71,7 @@ export interface FileRoutesByFullPath {
   '/signup': typeof SignupRoute
   '/admin': typeof AuthenticatedAdminRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/reports': typeof AuthenticatedReportsRoute
   '/sites/$siteId': typeof AuthenticatedSitesSiteIdRoute
   '/api/public/ingest': typeof ApiPublicIngestRoute
 }
@@ -74,6 +81,7 @@ export interface FileRoutesByTo {
   '/signup': typeof SignupRoute
   '/admin': typeof AuthenticatedAdminRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/reports': typeof AuthenticatedReportsRoute
   '/sites/$siteId': typeof AuthenticatedSitesSiteIdRoute
   '/api/public/ingest': typeof ApiPublicIngestRoute
 }
@@ -85,6 +93,7 @@ export interface FileRoutesById {
   '/signup': typeof SignupRoute
   '/_authenticated/admin': typeof AuthenticatedAdminRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
+  '/_authenticated/reports': typeof AuthenticatedReportsRoute
   '/_authenticated/sites/$siteId': typeof AuthenticatedSitesSiteIdRoute
   '/api/public/ingest': typeof ApiPublicIngestRoute
 }
@@ -96,6 +105,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/admin'
     | '/dashboard'
+    | '/reports'
     | '/sites/$siteId'
     | '/api/public/ingest'
   fileRoutesByTo: FileRoutesByTo
@@ -105,6 +115,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/admin'
     | '/dashboard'
+    | '/reports'
     | '/sites/$siteId'
     | '/api/public/ingest'
   id:
@@ -115,6 +126,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/_authenticated/admin'
     | '/_authenticated/dashboard'
+    | '/_authenticated/reports'
     | '/_authenticated/sites/$siteId'
     | '/api/public/ingest'
   fileRoutesById: FileRoutesById
@@ -157,6 +169,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/reports': {
+      id: '/_authenticated/reports'
+      path: '/reports'
+      fullPath: '/reports'
+      preLoaderRoute: typeof AuthenticatedReportsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/dashboard': {
       id: '/_authenticated/dashboard'
       path: '/dashboard'
@@ -191,12 +210,14 @@ declare module '@tanstack/react-router' {
 interface AuthenticatedRouteChildren {
   AuthenticatedAdminRoute: typeof AuthenticatedAdminRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
+  AuthenticatedReportsRoute: typeof AuthenticatedReportsRoute
   AuthenticatedSitesSiteIdRoute: typeof AuthenticatedSitesSiteIdRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedAdminRoute: AuthenticatedAdminRoute,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
+  AuthenticatedReportsRoute: AuthenticatedReportsRoute,
   AuthenticatedSitesSiteIdRoute: AuthenticatedSitesSiteIdRoute,
 }
 
