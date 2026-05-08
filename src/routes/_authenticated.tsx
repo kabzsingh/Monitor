@@ -2,7 +2,7 @@ import { createFileRoute, Outlet, useNavigate, Link, useRouterState } from "@tan
 import { useEffect } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { Button } from "@/components/ui/button";
-import { Activity, LayoutDashboard, Settings, LogOut } from "lucide-react";
+import { Activity, LayoutDashboard, Settings, LogOut, FileDown } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated")({ component: AuthLayout });
 
@@ -33,6 +33,11 @@ function AuthLayout() {
             <Link to="/dashboard">
               <Button variant={path === "/dashboard" ? "secondary" : "ghost"} size="sm">
                 <LayoutDashboard className="h-4 w-4" /> <span className="hidden sm:inline ml-1">Sites</span>
+              </Button>
+            </Link>
+            <Link to="/reports">
+              <Button variant={path.startsWith("/reports") ? "secondary" : "ghost"} size="sm">
+                <FileDown className="h-4 w-4" /> <span className="hidden sm:inline ml-1">Reports</span>
               </Button>
             </Link>
             {isAdmin && (
