@@ -10,12 +10,20 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { createSiteApiKey, grantAdminBootstrap, seedDemoData } from "@/lib/admin.functions";
-import { Copy, Plus, Trash2, KeyRound, Sparkles, Cpu } from "lucide-react";
+import { Copy, Plus, Trash2, KeyRound, Sparkles, Cpu, Mail, Send } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 
 export const Route = createFileRoute("/_authenticated/admin")({ component: AdminPage });
 
-interface Site { id: string; name: string; location: string | null }
+interface Site {
+  id: string; name: string; location: string | null;
+  timezone?: string;
+  report_hour?: number;
+  report_recipients?: string[];
+  daily_report_enabled?: boolean;
+  monthly_report_enabled?: boolean;
+}
 interface Meter { id: string; site_id: string; meter_type: "wash"|"fresh_water"|"chemical"; name: string; unit: string; capacity: number | null; low_threshold: number | null; device_key: string; position: number }
 interface ApiKeyRow { id: string; site_id: string; key_prefix: string; label: string | null; revoked: boolean; last_used_at: string | null; created_at: string }
 
@@ -35,7 +43,7 @@ function AdminPage() {
 
   const load = async () => {
     const [{ data: s }, { data: m }, { data: k }] = await Promise.all([
-      supabase.from("sites").select("id,name,location").order("created_at"),
+      supabase.from("sites").select("id,name,location,timezone,report_hour,report_recipients,daily_report_enabled,monthly_report_enabled").order("created_at"),
       supabase.from("site_meters").select("*").order("position"),
       supabase.from("site_api_keys").select("*").order("created_at"),
     ]);
