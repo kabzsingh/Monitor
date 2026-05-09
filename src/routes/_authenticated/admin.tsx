@@ -288,6 +288,87 @@ function SiteAdminCard({
           </div>
         )}
       </div>
+
+      <ReportSettings site={site} onSaved={() => { /* parent will refetch on next mount */ }} />
+    </div>
+  );
+}
+
+function ReportSettings({ site, onSaved }: { site: Site; onSaved: () => void }) {
+  const [hour, setHour] = useState<number>(site.report_hour ?? 7);
+  const [tz, setTz] = useState<string>(site.timezone || "UTC");
+  const [recipients, setRecipients] = useState<string>((site.report_recipients ?? []).join(", "));
+  const [daily, setDaily] = useState<boolean>(site.daily_report_enabled ?? true);
+  const [monthly, setMonthly] = useState<boolean>(site.monthly_report_enabled ?? true);
+  const [saving, setSaving] = useState(false);
+  const [sending, setSending] = useState(false);
+
+  const save = async () => {
+    setSaving(true);
+    const list = recipients.split(/[,\s;]+/).map((s) => s.trim()).filter(Boolean);
+    const bad = list.find((e) => !/.+@.+\..+/.test(e));
+    if (bad) { setSaving(false); return toast.error(`Invalid email: ${bad}`); }
+    const { error } = await supabase.from("sites").update({
+      report_hour: hour, timezone: tz, report_recipients: list,
+      daily_report_enabled: daily, monthly_report_enabled: monthly,
+    }).eq("id", site.id);
+    setSaving(false);
+    if (error) return toast.error(error.message);
+    toast.success("Report settings saved");
+    onSaved();
+  };
+
+  const sendTest = async () => {
+    setSending(true);
+    try {
+      const res = await fetch(`/api/public/hooks/send-reports?force=${site.id}`, { method: "POST" });
+      const j = await res.json();
+      if (!res.ok) throw new Error(JSON.stringify(j));
+      toast.success("Test report sent (check inbox)");
+    } catch (e: any) {
+      toast.error(e.message ?? "Send failed");
+    } finally { setSending(false); }
+  };
+
+  return (
+    <div className="mt-5 rounded-lg border border-border p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="text-xs uppercase tracking-wide text-muted-foreground flex items-center gap-1.5"><Mail className="h-3.5 w-3.5" /> Email reports</h4>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={sendTest} disabled={sending}><Send className="h-3.5 w-3.5" /> {sending ? "Sending…" : "Send test now"}</Button>
+          <Button size="sm" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label>Send hour (24h, site local)</Label>
+          <Select value={String(hour)} onValueChange={(v) => setHour(Number(v))}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {Array.from({ length: 24 }).map((_, i) => (
+                <SelectItem key={i} value={String(i)}>{String(i).padStart(2, "0")}:00</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label>Timezone (IANA)</Label>
+          <Input value={tz} onChange={(e) => setTz(e.target.value)} placeholder="Africa/Johannesburg" />
+        </div>
+        <div className="sm:col-span-2 space-y-1.5">
+          <Label>Recipients (comma-separated)</Label>
+          <Textarea rows={2} value={recipients} onChange={(e) => setRecipients(e.target.value)} placeholder="ops@example.com, manager@example.com" />
+        </div>
+        <label className="flex items-center justify-between rounded-md bg-secondary/50 px-3 py-2 text-sm">
+          <span>Daily report (every morning)</span>
+          <Switch checked={daily} onCheckedChange={setDaily} />
+        </label>
+        <label className="flex items-center justify-between rounded-md bg-secondary/50 px-3 py-2 text-sm">
+          <span>Monthly CSV (1st of month)</span>
+          <Switch checked={monthly} onCheckedChange={setMonthly} />
+        </label>
+      </div>
+      <p className="text-xs text-muted-foreground mt-2">Reports are sent from your connected Gmail account.</p>
     </div>
   );
 }
