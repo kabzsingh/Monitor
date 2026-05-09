@@ -283,3 +283,94 @@ function SiteAdminCard({
     </div>
   );
 }
+
+function buildEsp32Sketch(site: Site, meters: Meter[]) {
+  const endpoint = `${typeof window !== "undefined" ? window.location.origin : "https://your-app.lovable.app"}/api/public/ingest`;
+  const meterLines = meters
+    .map((m) => `  // ${m.name} (${m.meter_type}) — device_key: ${m.device_key}`)
+    .join("\n");
+  const sampleReadings = meters
+    .map((m, i) => {
+      const v = m.meter_type === "wash" ? "1" : m.meter_type === "fresh_water" ? "readPulseLitres()" : "readTankLevel()";
+      return `    {"device_key": "${m.device_key}", "value": ${v === "1" ? "1" : `0 /* TODO: ${v} */`}}${i < meters.length - 1 ? "," : ""}`;
+    })
+    .join("\n");
+
+  return `// Auto-generated for site: ${site.name}
+// Endpoint: ${endpoint}
+// Replace WIFI_SSID, WIFI_PASS, and SITE_API_KEY before flashing.
+//
+// Meters configured:
+${meterLines || "  // (no meters)"}
+
+#include <WiFi.h>
+#include <HTTPClient.h>
+
+const char* WIFI_SSID    = "YOUR_WIFI_SSID";
+const char* WIFI_PASS    = "YOUR_WIFI_PASSWORD";
+const char* SITE_API_KEY = "ws_live_xxx_paste_from_admin_panel";
+const char* INGEST_URL   = "${endpoint}";
+
+unsigned long lastSendMs = 0;
+const unsigned long SEND_INTERVAL_MS = 60UL * 1000UL; // every 60s
+
+void connectWifi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  Serial.print("Connecting WiFi");
+  while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+  Serial.println(" OK");
+}
+
+void sendReadings() {
+  if (WiFi.status() != WL_CONNECTED) connectWifi();
+
+  String payload = String("{\\"readings\\":[\\n") +
+${sampleReadings.split("\n").map((l) => `    "${l.replace(/"/g, '\\"').trim()}\\n"`).join(" +\n") || `    "{}"`} +
+    "]}";
+
+  HTTPClient http;
+  http.begin(INGEST_URL);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("x-site-api-key", SITE_API_KEY);
+  int code = http.POST(payload);
+  Serial.printf("POST %d -> %s\\n", code, http.getString().c_str());
+  http.end();
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(500);
+  connectWifi();
+}
+
+void loop() {
+  if (millis() - lastSendMs >= SEND_INTERVAL_MS) {
+    lastSendMs = millis();
+    sendReadings();
+  }
+  // TODO: read your pulse counters / analog tank sensors here
+  delay(50);
+}
+`;
+}
+
+function EspSketchDialog({ site, meters, onClose }: { site: Site | null; meters: Meter[]; onClose: () => void }) {
+  const code = site ? buildEsp32Sketch(site, meters) : "";
+  return (
+    <Dialog open={!!site} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader><DialogTitle>ESP32 sketch — {site?.name}</DialogTitle></DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          Paste this into the Arduino IDE. Replace the Wi-Fi creds and the <code>SITE_API_KEY</code> with the one generated above. Wire your pulse-counter / tank-level reads into the <code>TODO</code> spots.
+        </p>
+        <Textarea readOnly value={code} className="font-mono text-xs h-[420px]" />
+        <DialogFooter>
+          <Button onClick={() => { navigator.clipboard.writeText(code); toast.success("Sketch copied"); }}>
+            <Copy className="h-4 w-4" /> Copy sketch
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
