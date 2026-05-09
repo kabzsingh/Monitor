@@ -18,6 +18,7 @@ import { Route as AuthenticatedDashboardRouteImport } from './routes/_authentica
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
 import { Route as ApiPublicIngestRouteImport } from './routes/api/public/ingest'
 import { Route as AuthenticatedSitesSiteIdRouteImport } from './routes/_authenticated/sites.$siteId'
+import { Route as ApiPublicHooksSendReportsRouteImport } from './routes/api/public/hooks/send-reports'
 
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
@@ -64,6 +65,12 @@ const AuthenticatedSitesSiteIdRoute =
     path: '/sites/$siteId',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
+const ApiPublicHooksSendReportsRoute =
+  ApiPublicHooksSendReportsRouteImport.update({
+    id: '/api/public/hooks/send-reports',
+    path: '/api/public/hooks/send-reports',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -74,6 +81,7 @@ export interface FileRoutesByFullPath {
   '/reports': typeof AuthenticatedReportsRoute
   '/sites/$siteId': typeof AuthenticatedSitesSiteIdRoute
   '/api/public/ingest': typeof ApiPublicIngestRoute
+  '/api/public/hooks/send-reports': typeof ApiPublicHooksSendReportsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -84,6 +92,7 @@ export interface FileRoutesByTo {
   '/reports': typeof AuthenticatedReportsRoute
   '/sites/$siteId': typeof AuthenticatedSitesSiteIdRoute
   '/api/public/ingest': typeof ApiPublicIngestRoute
+  '/api/public/hooks/send-reports': typeof ApiPublicHooksSendReportsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -96,6 +105,7 @@ export interface FileRoutesById {
   '/_authenticated/reports': typeof AuthenticatedReportsRoute
   '/_authenticated/sites/$siteId': typeof AuthenticatedSitesSiteIdRoute
   '/api/public/ingest': typeof ApiPublicIngestRoute
+  '/api/public/hooks/send-reports': typeof ApiPublicHooksSendReportsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -108,6 +118,7 @@ export interface FileRouteTypes {
     | '/reports'
     | '/sites/$siteId'
     | '/api/public/ingest'
+    | '/api/public/hooks/send-reports'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -118,6 +129,7 @@ export interface FileRouteTypes {
     | '/reports'
     | '/sites/$siteId'
     | '/api/public/ingest'
+    | '/api/public/hooks/send-reports'
   id:
     | '__root__'
     | '/'
@@ -129,6 +141,7 @@ export interface FileRouteTypes {
     | '/_authenticated/reports'
     | '/_authenticated/sites/$siteId'
     | '/api/public/ingest'
+    | '/api/public/hooks/send-reports'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -137,6 +150,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   SignupRoute: typeof SignupRoute
   ApiPublicIngestRoute: typeof ApiPublicIngestRoute
+  ApiPublicHooksSendReportsRoute: typeof ApiPublicHooksSendReportsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -204,6 +218,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedSitesSiteIdRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/api/public/hooks/send-reports': {
+      id: '/api/public/hooks/send-reports'
+      path: '/api/public/hooks/send-reports'
+      fullPath: '/api/public/hooks/send-reports'
+      preLoaderRoute: typeof ApiPublicHooksSendReportsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -231,6 +252,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   SignupRoute: SignupRoute,
   ApiPublicIngestRoute: ApiPublicIngestRoute,
+  ApiPublicHooksSendReportsRoute: ApiPublicHooksSendReportsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

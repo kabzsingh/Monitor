@@ -77,6 +77,39 @@ export type Database = {
           },
         ]
       }
+      report_send_log: {
+        Row: {
+          error: string | null
+          id: number
+          period_key: string
+          recipients: string[]
+          report_type: string
+          sent_at: string
+          site_id: string
+          status: string
+        }
+        Insert: {
+          error?: string | null
+          id?: number
+          period_key: string
+          recipients?: string[]
+          report_type: string
+          sent_at?: string
+          site_id: string
+          status?: string
+        }
+        Update: {
+          error?: string | null
+          id?: number
+          period_key?: string
+          recipients?: string[]
+          report_type?: string
+          sent_at?: string
+          site_id?: string
+          status?: string
+        }
+        Relationships: []
+      }
       site_api_keys: {
         Row: {
           created_at: string
@@ -197,28 +230,40 @@ export type Database = {
       sites: {
         Row: {
           created_at: string
+          daily_report_enabled: boolean
           id: string
           location: string | null
           low_chemical_threshold_pct: number
+          monthly_report_enabled: boolean
           name: string
+          report_hour: number
+          report_recipients: string[]
           timezone: string
           updated_at: string
         }
         Insert: {
           created_at?: string
+          daily_report_enabled?: boolean
           id?: string
           location?: string | null
           low_chemical_threshold_pct?: number
+          monthly_report_enabled?: boolean
           name: string
+          report_hour?: number
+          report_recipients?: string[]
           timezone?: string
           updated_at?: string
         }
         Update: {
           created_at?: string
+          daily_report_enabled?: boolean
           id?: string
           location?: string | null
           low_chemical_threshold_pct?: number
+          monthly_report_enabled?: boolean
           name?: string
+          report_hour?: number
+          report_recipients?: string[]
           timezone?: string
           updated_at?: string
         }
