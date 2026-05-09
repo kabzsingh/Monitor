@@ -10,7 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { createSiteApiKey, grantAdminBootstrap, seedDemoData } from "@/lib/admin.functions";
-import { Copy, Plus, Trash2, KeyRound, Sparkles } from "lucide-react";
+import { Copy, Plus, Trash2, KeyRound, Sparkles, Cpu } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 
 export const Route = createFileRoute("/_authenticated/admin")({ component: AdminPage });
 
@@ -30,6 +31,7 @@ function AdminPage() {
   const [newSiteName, setNewSiteName] = useState("");
   const [newSiteLoc, setNewSiteLoc] = useState("");
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
+  const [sketchSite, setSketchSite] = useState<Site | null>(null);
 
   const load = async () => {
     const [{ data: s }, { data: m }, { data: k }] = await Promise.all([
@@ -151,6 +153,7 @@ function AdminPage() {
           onRemoveMeter={removeMeter}
           onGenerateKey={() => handleGenKey(site.id)}
           onRevokeKey={revokeKey}
+        onGenerateSketch={() => setSketchSite(site)}
         />
       ))}
 
@@ -164,12 +167,18 @@ function AdminPage() {
           </Button>
         </DialogContent>
       </Dialog>
+
+      <EspSketchDialog
+        site={sketchSite}
+        meters={sketchSite ? meters.filter((m) => m.site_id === sketchSite.id) : []}
+        onClose={() => setSketchSite(null)}
+      />
     </div>
   );
 }
 
 function SiteAdminCard({
-  site, meters, keys, onRemoveSite, onAddMeter, onRemoveMeter, onGenerateKey, onRevokeKey,
+  site, meters, keys, onRemoveSite, onAddMeter, onRemoveMeter, onGenerateKey, onRevokeKey, onGenerateSketch,
 }: {
   site: Site; meters: Meter[]; keys: ApiKeyRow[];
   onRemoveSite: () => void;
@@ -177,6 +186,7 @@ function SiteAdminCard({
   onRemoveMeter: (id: string) => void;
   onGenerateKey: () => void;
   onRevokeKey: (id: string) => void;
+  onGenerateSketch: () => void;
 }) {
   const [type, setType] = useState<Meter["meter_type"]>("chemical");
   const [name, setName] = useState("");
@@ -192,7 +202,12 @@ function SiteAdminCard({
           <h3 className="font-semibold text-lg">{site.name}</h3>
           {site.location && <div className="text-xs text-muted-foreground">{site.location}</div>}
         </div>
-        <Button variant="ghost" size="sm" onClick={onRemoveSite}><Trash2 className="h-4 w-4" /></Button>
+        <div className="flex items-center gap-1">
+          <Button variant="outline" size="sm" onClick={onGenerateSketch} disabled={meters.length === 0}>
+            <Cpu className="h-4 w-4" /> ESP32 sketch
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onRemoveSite}><Trash2 className="h-4 w-4" /></Button>
+        </div>
       </div>
 
       <div className="mt-4">
@@ -266,5 +281,104 @@ function SiteAdminCard({
         )}
       </div>
     </div>
+  );
+}
+
+function buildEsp32Sketch(site: Site, meters: Meter[]) {
+  const endpoint = `${typeof window !== "undefined" ? window.location.origin : "https://your-app.lovable.app"}/api/public/ingest`;
+  const meterLines = meters
+    .map((m) => `  // ${m.name} (${m.meter_type}) — device_key: ${m.device_key}`)
+    .join("\n");
+  const varDecls = meters
+    .map((m) => `float v_${m.device_key.replace(/[^a-zA-Z0-9]/g, "_")} = 0; // ${m.name}`)
+    .join("\n");
+  const jsonParts = meters
+    .map((m, i) => {
+      const v = `v_${m.device_key.replace(/[^a-zA-Z0-9]/g, "_")}`;
+      const sep = i < meters.length - 1 ? "," : "";
+      return `  payload += "{\\"device_key\\":\\"${m.device_key}\\",\\"value\\":" + String(${v}, 3) + "}${sep}";`;
+    })
+    .join("\n");
+
+  return `// Auto-generated for site: ${site.name}
+// Endpoint: ${endpoint}
+// Replace WIFI_SSID, WIFI_PASS, and SITE_API_KEY before flashing.
+//
+// Meters configured:
+${meterLines || "  // (no meters)"}
+
+#include <WiFi.h>
+#include <HTTPClient.h>
+
+const char* WIFI_SSID    = "YOUR_WIFI_SSID";
+const char* WIFI_PASS    = "YOUR_WIFI_PASSWORD";
+const char* SITE_API_KEY = "ws_live_xxx_paste_from_admin_panel";
+const char* INGEST_URL   = "${endpoint}";
+
+unsigned long lastSendMs = 0;
+const unsigned long SEND_INTERVAL_MS = 60UL * 1000UL; // every 60s
+
+// Reading variables — update these from your sensors in loop()
+${varDecls}
+
+void connectWifi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  Serial.print("Connecting WiFi");
+  while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+  Serial.println(" OK");
+}
+
+void sendReadings() {
+  if (WiFi.status() != WL_CONNECTED) connectWifi();
+
+  String payload = "{\\"readings\\":[";
+${jsonParts}
+  payload += "]}";
+
+  HTTPClient http;
+  http.begin(INGEST_URL);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("x-site-api-key", SITE_API_KEY);
+  int code = http.POST(payload);
+  Serial.printf("POST %d -> %s\\n", code, http.getString().c_str());
+  http.end();
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(500);
+  connectWifi();
+}
+
+void loop() {
+  if (millis() - lastSendMs >= SEND_INTERVAL_MS) {
+    lastSendMs = millis();
+    sendReadings();
+  }
+  // TODO: update reading variables from your sensors:
+${meters.map((m) => `  // v_${m.device_key.replace(/[^a-zA-Z0-9]/g, "_")} = ...; // ${m.name} (${m.unit})`).join("\n")}
+  delay(50);
+}
+`;
+}
+
+function EspSketchDialog({ site, meters, onClose }: { site: Site | null; meters: Meter[]; onClose: () => void }) {
+  const code = site ? buildEsp32Sketch(site, meters) : "";
+  return (
+    <Dialog open={!!site} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader><DialogTitle>ESP32 sketch — {site?.name}</DialogTitle></DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          Paste this into the Arduino IDE. Replace the Wi-Fi creds and the <code>SITE_API_KEY</code> with the one generated above. Wire your pulse-counter / tank-level reads into the <code>TODO</code> spots.
+        </p>
+        <Textarea readOnly value={code} className="font-mono text-xs h-[420px]" />
+        <DialogFooter>
+          <Button onClick={() => { navigator.clipboard.writeText(code); toast.success("Sketch copied"); }}>
+            <Copy className="h-4 w-4" /> Copy sketch
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
