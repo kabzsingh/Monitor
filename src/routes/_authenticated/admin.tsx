@@ -318,6 +318,9 @@ const char* INGEST_URL   = "${endpoint}";
 unsigned long lastSendMs = 0;
 const unsigned long SEND_INTERVAL_MS = 60UL * 1000UL; // every 60s
 
+// Reading variables — update these from your sensors in loop()
+${varDecls}
+
 void connectWifi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
