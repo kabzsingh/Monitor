@@ -10,7 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { createSiteApiKey, grantAdminBootstrap, seedDemoData } from "@/lib/admin.functions";
-import { Copy, Plus, Trash2, KeyRound, Sparkles } from "lucide-react";
+import { Copy, Plus, Trash2, KeyRound, Sparkles, Cpu } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 
 export const Route = createFileRoute("/_authenticated/admin")({ component: AdminPage });
 
@@ -30,6 +31,7 @@ function AdminPage() {
   const [newSiteName, setNewSiteName] = useState("");
   const [newSiteLoc, setNewSiteLoc] = useState("");
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
+  const [sketchSite, setSketchSite] = useState<Site | null>(null);
 
   const load = async () => {
     const [{ data: s }, { data: m }, { data: k }] = await Promise.all([
@@ -151,6 +153,7 @@ function AdminPage() {
           onRemoveMeter={removeMeter}
           onGenerateKey={() => handleGenKey(site.id)}
           onRevokeKey={revokeKey}
+        onGenerateSketch={() => setSketchSite(site)}
         />
       ))}
 
@@ -164,6 +167,12 @@ function AdminPage() {
           </Button>
         </DialogContent>
       </Dialog>
+
+      <EspSketchDialog
+        site={sketchSite}
+        meters={sketchSite ? meters.filter((m) => m.site_id === sketchSite.id) : []}
+        onClose={() => setSketchSite(null)}
+      />
     </div>
   );
 }
