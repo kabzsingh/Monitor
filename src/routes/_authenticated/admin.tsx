@@ -178,7 +178,7 @@ function AdminPage() {
 }
 
 function SiteAdminCard({
-  site, meters, keys, onRemoveSite, onAddMeter, onRemoveMeter, onGenerateKey, onRevokeKey,
+  site, meters, keys, onRemoveSite, onAddMeter, onRemoveMeter, onGenerateKey, onRevokeKey, onGenerateSketch,
 }: {
   site: Site; meters: Meter[]; keys: ApiKeyRow[];
   onRemoveSite: () => void;
@@ -186,6 +186,7 @@ function SiteAdminCard({
   onRemoveMeter: (id: string) => void;
   onGenerateKey: () => void;
   onRevokeKey: (id: string) => void;
+  onGenerateSketch: () => void;
 }) {
   const [type, setType] = useState<Meter["meter_type"]>("chemical");
   const [name, setName] = useState("");
@@ -201,7 +202,12 @@ function SiteAdminCard({
           <h3 className="font-semibold text-lg">{site.name}</h3>
           {site.location && <div className="text-xs text-muted-foreground">{site.location}</div>}
         </div>
-        <Button variant="ghost" size="sm" onClick={onRemoveSite}><Trash2 className="h-4 w-4" /></Button>
+        <div className="flex items-center gap-1">
+          <Button variant="outline" size="sm" onClick={onGenerateSketch} disabled={meters.length === 0}>
+            <Cpu className="h-4 w-4" /> ESP32 sketch
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onRemoveSite}><Trash2 className="h-4 w-4" /></Button>
+        </div>
       </div>
 
       <div className="mt-4">
