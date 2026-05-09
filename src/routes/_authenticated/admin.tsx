@@ -289,10 +289,14 @@ function buildEsp32Sketch(site: Site, meters: Meter[]) {
   const meterLines = meters
     .map((m) => `  // ${m.name} (${m.meter_type}) — device_key: ${m.device_key}`)
     .join("\n");
-  const sampleReadings = meters
+  const varDecls = meters
+    .map((m) => `float v_${m.device_key.replace(/[^a-zA-Z0-9]/g, "_")} = 0; // ${m.name}`)
+    .join("\n");
+  const jsonParts = meters
     .map((m, i) => {
-      const v = m.meter_type === "wash" ? "1" : m.meter_type === "fresh_water" ? "readPulseLitres()" : "readTankLevel()";
-      return `    {"device_key": "${m.device_key}", "value": ${v === "1" ? "1" : `0 /* TODO: ${v} */`}}${i < meters.length - 1 ? "," : ""}`;
+      const v = `v_${m.device_key.replace(/[^a-zA-Z0-9]/g, "_")}`;
+      const sep = i < meters.length - 1 ? "," : "";
+      return `  payload += "{\\"device_key\\":\\"${m.device_key}\\",\\"value\\":" + String(${v}, 3) + "}${sep}";`;
     })
     .join("\n");
 
@@ -325,9 +329,9 @@ void connectWifi() {
 void sendReadings() {
   if (WiFi.status() != WL_CONNECTED) connectWifi();
 
-  String payload = String("{\\"readings\\":[\\n") +
-${sampleReadings.split("\n").map((l) => `    "${l.replace(/"/g, '\\"').trim()}\\n"`).join(" +\n") || `    "{}"`} +
-    "]}";
+  String payload = "{\\"readings\\":[";
+${jsonParts}
+  payload += "]}";
 
   HTTPClient http;
   http.begin(INGEST_URL);
@@ -349,7 +353,8 @@ void loop() {
     lastSendMs = millis();
     sendReadings();
   }
-  // TODO: read your pulse counters / analog tank sensors here
+  // TODO: update reading variables from your sensors:
+${meters.map((m) => `  // v_${m.device_key.replace(/[^a-zA-Z0-9]/g, "_")} = ...; // ${m.name} (${m.unit})`).join("\n")}
   delay(50);
 }
 `;
