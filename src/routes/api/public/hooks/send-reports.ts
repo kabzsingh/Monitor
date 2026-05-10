@@ -128,47 +128,42 @@ async function buildDailyReport(site: any, meters: any[]) {
   const toIso = new Date(endLocal.getTime() + 1).toISOString();
 
   const readings = await fetchReadings(site.id, fromIso, toIso);
-  const byMeter = new Map<string, number[]>();
+  // hour buckets
+  const buckets = new Map<string, Map<string, number[]>>();
   for (const r of readings) {
-    const arr = byMeter.get(r.meter_id) ?? [];
+    const d = new Date(r.recorded_at);
+    const hourKey = `${String(d.getUTCHours()).padStart(2, "0")}:00`;
+    if (!buckets.has(hourKey)) buckets.set(hourKey, new Map());
+    const inner = buckets.get(hourKey)!;
+    const arr = inner.get(r.meter_id) ?? [];
     arr.push(Number(r.value));
-    byMeter.set(r.meter_id, arr);
+    inner.set(r.meter_id, arr);
   }
+  const hours = Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, "0")}:00`);
 
-  const rows = meters.map((m) => {
-    const vals = byMeter.get(m.id) ?? [];
-    const sum = vals.reduce((a, b) => a + b, 0);
-    const last = vals.length ? vals[vals.length - 1] : null;
-    const display =
-      m.meter_type === "wash"
-        ? `${vals.length} wash${vals.length === 1 ? "" : "es"}`
-        : m.meter_type === "fresh_water"
-        ? `${sum.toFixed(2)} ${m.unit}`
-        : last != null
-        ? `${last.toFixed(2)} ${m.unit}${m.capacity ? ` / ${m.capacity}` : ""}`
-        : "—";
-    return { name: m.name, type: m.meter_type, display };
-  });
+  const header = ["hour", ...meters.map((m) => `${m.name} (${m.unit || m.meter_type})`)];
+  const lines = [header.map(escapeCsv).join(",")];
+  for (const h of hours) {
+    const row: any[] = [h];
+    for (const meter of meters) {
+      const vals = buckets.get(h)?.get(meter.id) ?? [];
+      if (meter.meter_type === "wash") row.push(vals.length);
+      else if (meter.meter_type === "fresh_water") row.push(vals.reduce((a, b) => a + b, 0).toFixed(2));
+      else row.push(vals.length ? vals[vals.length - 1].toFixed(2) : "");
+    }
+    lines.push(row.map(escapeCsv).join(","));
+  }
+  const csv = lines.join("\n");
 
+  const safeName = site.name.replace(/[^a-z0-9]+/gi, "_");
   const subject = `Daily report — ${site.name} — ${ymd}`;
-  const text =
-    `${site.name}\nDaily report for ${ymd}\n\n` +
-    rows.map((r) => `• ${r.name}: ${r.display}`).join("\n");
-  const html = `
-    <div style="font-family:Arial,sans-serif;max-width:560px">
-      <h2 style="margin:0 0 4px">${site.name}</h2>
-      <div style="color:#666;margin-bottom:16px">Daily report for ${ymd}</div>
-      <table style="width:100%;border-collapse:collapse">
-        <thead><tr>
-          <th align="left" style="border-bottom:1px solid #ddd;padding:6px">Meter</th>
-          <th align="left" style="border-bottom:1px solid #ddd;padding:6px">Reading</th>
-        </tr></thead>
-        <tbody>
-          ${rows.map((r) => `<tr><td style="padding:6px;border-bottom:1px solid #f0f0f0">${r.name}</td><td style="padding:6px;border-bottom:1px solid #f0f0f0">${r.display}</td></tr>`).join("")}
-        </tbody>
-      </table>
-    </div>`;
-  return { subject, text, html, periodKey: ymd };
+  const text = `Daily report for ${site.name} — ${ymd}\n\nSee attached CSV.`;
+  return {
+    subject,
+    text,
+    periodKey: ymd,
+    attachment: { filename: `${safeName}_daily_${ymd}.csv`, mime: "text/csv; charset=UTF-8", content: csv },
+  };
 }
 
 async function buildMonthlyReport(site: any, meters: any[]) {
@@ -214,15 +209,15 @@ async function buildMonthlyReport(site: any, meters: any[]) {
   }
   const csv = lines.join("\n");
 
+  const safeName = site.name.replace(/[^a-z0-9]+/gi, "_");
   const subject = `Monthly report — ${site.name} — ${ym}`;
-  const text = `Monthly report for ${site.name} — ${ym}\n\n${csv}`;
-  const html = `
-    <div style="font-family:Arial,sans-serif">
-      <h2 style="margin:0 0 4px">${site.name}</h2>
-      <div style="color:#666;margin-bottom:16px">Monthly CSV for ${ym}</div>
-      <pre style="font-family:'SFMono-Regular',Menlo,monospace;font-size:12px;background:#f6f6f8;padding:12px;border-radius:6px;overflow:auto">${csv.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</pre>
-    </div>`;
-  return { subject, text, html, periodKey: ym };
+  const text = `Monthly report for ${site.name} — ${ym}\n\nSee attached CSV.`;
+  return {
+    subject,
+    text,
+    periodKey: ym,
+    attachment: { filename: `${safeName}_monthly_${ym}.csv`, mime: "text/csv; charset=UTF-8", content: csv },
+  };
 }
 
 async function processSite(site: any) {
@@ -245,7 +240,7 @@ async function processSite(site: any) {
       .insert({ site_id: site.id, report_type: "daily", period_key: r.periodKey, recipients });
     if (!dupErr) {
       try {
-        await sendGmail(recipients, r.subject, r.html, r.text);
+        await sendGmail(recipients, r.subject, r.text, r.attachment);
         results.push({ type: "daily", period: r.periodKey, ok: true });
       } catch (e: any) {
         await supabaseAdmin.from("report_send_log")
@@ -265,7 +260,7 @@ async function processSite(site: any) {
       .insert({ site_id: site.id, report_type: "monthly", period_key: r.periodKey, recipients });
     if (!dupErr) {
       try {
-        await sendGmail(recipients, r.subject, r.html, r.text);
+        await sendGmail(recipients, r.subject, r.text, r.attachment);
         results.push({ type: "monthly", period: r.periodKey, ok: true });
       } catch (e: any) {
         await supabaseAdmin.from("report_send_log")
