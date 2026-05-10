@@ -266,32 +266,32 @@ function SiteDetail() {
             {washMeters.map((m) => {
               const last = stats.latestByMeter.get(m.id);
               return (
-                <MeterCard
-                  key={m.id}
-                  name={m.name}
-                  meterType="wash"
-                  value={last ? Number(last.value) : 0}
-                  unit={m.unit}
-                  capacity={m.capacity}
-                  lowThreshold={m.low_threshold}
-                />
-                <AdminAdjust meterId={m.id} siteId={siteId} unit={m.unit} onSaved={load} label={`Adjust ${m.name}`} />
+                <div key={m.id} className="space-y-2">
+                  <MeterCard
+                    name={m.name}
+                    meterType="wash"
+                    value={last ? Number(last.value) : 0}
+                    unit={m.unit}
+                    capacity={m.capacity}
+                    lowThreshold={m.low_threshold}
+                  />
+                  <AdminAdjust meterId={m.id} siteId={siteId} unit={m.unit} onSaved={load} />
                 </div>
               );
             })}
             {freshMeters.map((m) => {
               const last = stats.latestByMeter.get(m.id);
               return (
-                <MeterCard
-                  key={m.id}
-                  name={m.name}
-                  meterType="fresh_water"
-                  value={last ? Number(last.value) : 0}
-                  unit={m.unit}
-                  capacity={m.capacity}
-                  lowThreshold={m.low_threshold}
-                />
-                <AdminAdjust meterId={m.id} siteId={siteId} unit={m.unit} onSaved={load} label={`Adjust ${m.name}`} />
+                <div key={m.id} className="space-y-2">
+                  <MeterCard
+                    name={m.name}
+                    meterType="fresh_water"
+                    value={last ? Number(last.value) : 0}
+                    unit={m.unit}
+                    capacity={m.capacity}
+                    lowThreshold={m.low_threshold}
+                  />
+                  <AdminAdjust meterId={m.id} siteId={siteId} unit={m.unit} onSaved={load} />
                 </div>
               );
             })}
