@@ -113,7 +113,7 @@ function SiteDetail() {
       } else if (meter.meter_type === "fresh_water") {
         freshLifetime += Number(r.value);
         if (ts >= startMs) freshToday += Number(r.value);
-      } else if (meter.meter_type === "chemical") {
+      } else if (meter.meter_type === "chemical" || meter.meter_type === "chemical_flow") {
         const prev = latestByMeter.get(r.meter_id);
         if (!prev || prev.recorded_at < r.recorded_at)
           latestByMeter.set(r.meter_id, r);
