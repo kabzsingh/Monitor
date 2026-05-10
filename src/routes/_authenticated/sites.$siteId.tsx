@@ -1,11 +1,14 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { ArrowLeft, Activity, Droplets, FlaskConical, Gauge } from "lucide-react";
+import { ArrowLeft, Activity, Droplets, FlaskConical, Gauge, Pencil } from "lucide-react";
 import { StatCard } from "@/components/app/StatCard";
 import { MeterCard } from "@/components/app/MeterCard";
 import { ChemicalGauge } from "@/components/app/ChemicalGauge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { useAuth } from "@/lib/auth-context";
+import { toast } from "sonner";
 import {
   LineChart,
   Line,
@@ -272,6 +275,8 @@ function SiteDetail() {
                   capacity={m.capacity}
                   lowThreshold={m.low_threshold}
                 />
+                <AdminAdjust meterId={m.id} siteId={siteId} unit={m.unit} onSaved={load} label={`Adjust ${m.name}`} />
+                </div>
               );
             })}
             {freshMeters.map((m) => {
@@ -286,6 +291,8 @@ function SiteDetail() {
                   capacity={m.capacity}
                   lowThreshold={m.low_threshold}
                 />
+                <AdminAdjust meterId={m.id} siteId={siteId} unit={m.unit} onSaved={load} label={`Adjust ${m.name}`} />
+                </div>
               );
             })}
           </div>
