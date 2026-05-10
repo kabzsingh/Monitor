@@ -154,6 +154,7 @@ export type Database = {
       site_meters: {
         Row: {
           capacity: number | null
+          chemical_group: string | null
           created_at: string
           device_key: string
           id: string
@@ -166,6 +167,7 @@ export type Database = {
         }
         Insert: {
           capacity?: number | null
+          chemical_group?: string | null
           created_at?: string
           device_key: string
           id?: string
@@ -178,6 +180,7 @@ export type Database = {
         }
         Update: {
           capacity?: number | null
+          chemical_group?: string | null
           created_at?: string
           device_key?: string
           id?: string
@@ -309,7 +312,7 @@ export type Database = {
     }
     Enums: {
       app_role: "admin" | "operator"
-      meter_type: "wash" | "fresh_water" | "chemical"
+      meter_type: "wash" | "fresh_water" | "chemical" | "chemical_flow"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -438,7 +441,7 @@ export const Constants = {
   public: {
     Enums: {
       app_role: ["admin", "operator"],
-      meter_type: ["wash", "fresh_water", "chemical"],
+      meter_type: ["wash", "fresh_water", "chemical", "chemical_flow"],
     },
   },
 } as const
