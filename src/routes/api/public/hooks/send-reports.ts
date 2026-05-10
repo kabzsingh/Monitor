@@ -8,14 +8,22 @@ function b64url(s: string) {
   return Buffer.from(s, "utf-8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function buildRaw(to: string[], subject: string, html: string, text: string) {
+function buildRawWithAttachment(
+  to: string[],
+  subject: string,
+  text: string,
+  attachment: { filename: string; mime: string; content: string },
+) {
   const boundary = "lovable_" + Math.random().toString(36).slice(2);
   const headers = [
     `To: ${to.join(", ")}`,
     `Subject: =?UTF-8?B?${Buffer.from(subject, "utf-8").toString("base64")}?=`,
     "MIME-Version: 1.0",
-    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
   ].join("\r\n");
+  const attachmentB64 = Buffer.from(attachment.content, "utf-8")
+    .toString("base64")
+    .replace(/(.{76})/g, "$1\r\n");
   const body = [
     `--${boundary}`,
     'Content-Type: text/plain; charset="UTF-8"',
@@ -23,21 +31,27 @@ function buildRaw(to: string[], subject: string, html: string, text: string) {
     "",
     text,
     `--${boundary}`,
-    'Content-Type: text/html; charset="UTF-8"',
-    "Content-Transfer-Encoding: 7bit",
+    `Content-Type: ${attachment.mime}; name="${attachment.filename}"`,
+    "Content-Transfer-Encoding: base64",
+    `Content-Disposition: attachment; filename="${attachment.filename}"`,
     "",
-    html,
+    attachmentB64,
     `--${boundary}--`,
   ].join("\r\n");
   return b64url(headers + "\r\n\r\n" + body);
 }
 
-async function sendGmail(to: string[], subject: string, html: string, text: string) {
+async function sendGmail(
+  to: string[],
+  subject: string,
+  text: string,
+  attachment: { filename: string; mime: string; content: string },
+) {
   const LOVABLE_API_KEY = process.env.LOVABLE_API_KEY;
   const GOOGLE_MAIL_API_KEY = process.env.GOOGLE_MAIL_API_KEY;
   if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY missing");
   if (!GOOGLE_MAIL_API_KEY) throw new Error("GOOGLE_MAIL_API_KEY missing");
-  const raw = buildRaw(to, subject, html, text);
+  const raw = buildRawWithAttachment(to, subject, text, attachment);
   const res = await fetch(`${GMAIL_GATEWAY}/users/me/messages/send`, {
     method: "POST",
     headers: {
