@@ -346,6 +346,7 @@ function SiteDetail() {
                   ) : (
                     <div className="rounded-lg border border-dashed border-border p-3 text-xs text-muted-foreground">No level sensor</div>
                   )}
+                  {lvl ? <AdminAdjust meterId={lvl.id} siteId={siteId} unit={lvl.unit} onSaved={load} /> : null}
                   {flw ? (
                     <div className="rounded-lg border border-border bg-card/60 p-3">
                       <div className="flex items-center justify-between text-sm">
@@ -359,12 +360,48 @@ function SiteDetail() {
                   ) : (
                     <div className="rounded-lg border border-dashed border-border p-3 text-xs text-muted-foreground">No flow meter</div>
                   )}
+                  {flw ? <AdminAdjust meterId={flw.id} siteId={siteId} unit={flw.unit} onSaved={load} /> : null}
                 </div>
               );
             })}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function AdminAdjust({ meterId, siteId, unit, onSaved }:
+  { meterId: string; siteId: string; unit: string; onSaved: () => void }) {
+  const { isAdmin } = useAuth();
+  const [open, setOpen] = useState(false);
+  const [val, setVal] = useState("");
+  const [busy, setBusy] = useState(false);
+  if (!isAdmin) return null;
+  const submit = async () => {
+    const n = Number(val);
+    if (!Number.isFinite(n)) return toast.error("Enter a valid number");
+    setBusy(true);
+    const { error } = await supabase.from("readings").insert({
+      site_id: siteId, meter_id: meterId, value: n, recorded_at: new Date().toISOString(),
+    });
+    setBusy(false);
+    if (error) return toast.error(error.message);
+    toast.success("Reading saved");
+    setVal(""); setOpen(false); onSaved();
+  };
+  if (!open) {
+    return (
+      <Button variant="ghost" size="sm" className="w-full justify-center text-xs h-7" onClick={() => setOpen(true)}>
+        <Pencil className="h-3 w-3" /> Adjust reading
+      </Button>
+    );
+  }
+  return (
+    <div className="flex items-center gap-1.5">
+      <Input autoFocus type="number" step="any" value={val} onChange={(e) => setVal(e.target.value)} placeholder={`New value (${unit})`} className="h-8 text-xs" />
+      <Button size="sm" className="h-8" onClick={submit} disabled={busy}>{busy ? "…" : "Save"}</Button>
+      <Button size="sm" variant="ghost" className="h-8" onClick={() => { setOpen(false); setVal(""); }}>×</Button>
     </div>
   );
 }
