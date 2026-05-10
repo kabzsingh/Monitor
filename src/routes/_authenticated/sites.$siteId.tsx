@@ -22,12 +22,13 @@ export const Route = createFileRoute("/_authenticated/sites/$siteId")({
 
 interface Meter {
   id: string;
-  meter_type: "wash" | "fresh_water" | "chemical";
+  meter_type: "wash" | "fresh_water" | "chemical" | "chemical_flow";
   name: string;
   unit: string;
   capacity: number | null;
   low_threshold: number | null;
   device_key: string;
+  chemical_group: string | null;
 }
 interface Reading {
   meter_id: string;
@@ -54,7 +55,7 @@ function SiteDetail() {
       supabase
         .from("site_meters")
         .select(
-          "id,meter_type,name,unit,capacity,low_threshold,device_key,position"
+          "id,meter_type,name,unit,capacity,low_threshold,device_key,position,chemical_group"
         )
         .eq("site_id", siteId)
         .order("position"),
@@ -112,7 +113,7 @@ function SiteDetail() {
       } else if (meter.meter_type === "fresh_water") {
         freshLifetime += Number(r.value);
         if (ts >= startMs) freshToday += Number(r.value);
-      } else if (meter.meter_type === "chemical") {
+      } else if (meter.meter_type === "chemical" || meter.meter_type === "chemical_flow") {
         const prev = latestByMeter.get(r.meter_id);
         if (!prev || prev.recorded_at < r.recorded_at)
           latestByMeter.set(r.meter_id, r);
@@ -127,9 +128,24 @@ function SiteDetail() {
     };
   }, [readings, meters]);
 
-  const chemicalMeters = meters.filter((m) => m.meter_type === "chemical");
+  const chemicalLevelMeters = meters.filter((m) => m.meter_type === "chemical");
+  const chemicalFlowMeters = meters.filter((m) => m.meter_type === "chemical_flow");
   const washMeters = meters.filter((m) => m.meter_type === "wash");
   const freshMeters = meters.filter((m) => m.meter_type === "fresh_water");
+
+  // Group chemicals by chemical_group label so a level + flow meter render side-by-side.
+  const chemicalGroups = useMemo(() => {
+    const groups = new Map<string, { label: string; level?: Meter; flow?: Meter }>();
+    const push = (key: string, label: string, m: Meter) => {
+      const g = groups.get(key) ?? { label };
+      if (m.meter_type === "chemical") g.level = m;
+      else if (m.meter_type === "chemical_flow") g.flow = m;
+      groups.set(key, g);
+    };
+    for (const m of chemicalLevelMeters) push(m.chemical_group || `lvl:${m.id}`, m.chemical_group || m.name, m);
+    for (const m of chemicalFlowMeters) push(m.chemical_group || `flw:${m.id}`, m.chemical_group || m.name, m);
+    return Array.from(groups.values());
+  }, [chemicalLevelMeters, chemicalFlowMeters]);
 
   // Hourly wash chart for last 24h
   const washChart = useMemo(() => {
@@ -218,7 +234,7 @@ function SiteDetail() {
         <StatCard
           icon={FlaskConical}
           label="Chemicals low"
-          tone={chemicalMeters.some((m) => {
+          tone={chemicalLevelMeters.some((m) => {
             const last = stats.latestByMeter.get(m.id);
             return (
               last &&
@@ -228,14 +244,14 @@ function SiteDetail() {
           })
             ? "danger"
             : "success"}
-          value={`${chemicalMeters.filter((m) => {
+          value={`${chemicalLevelMeters.filter((m) => {
             const last = stats.latestByMeter.get(m.id);
             return (
               last &&
               m.low_threshold !== null &&
               Number(last.value) <= Number(m.low_threshold)
             );
-          }).length} / ${chemicalMeters.length}`}
+          }).length} / ${chemicalLevelMeters.length}`}
         />
       </div>
 
@@ -295,23 +311,48 @@ function SiteDetail() {
         <h2 className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wide">
           Chemical levels
         </h2>
-        {chemicalMeters.length === 0 ? (
+        {chemicalGroups.length === 0 ? (
           <div className="text-sm text-muted-foreground">
             No chemical meters configured.
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {chemicalMeters.map((m) => {
-              const last = stats.latestByMeter.get(m.id);
+            {chemicalGroups.map((g, i) => {
+              const lvl = g.level;
+              const flw = g.flow;
+              const lvlLast = lvl ? stats.latestByMeter.get(lvl.id) : undefined;
+              const flwLast = flw ? stats.latestByMeter.get(flw.id) : undefined;
               return (
-                <ChemicalGauge
-                  key={m.id}
-                  name={m.name}
-                  value={last ? Number(last.value) : 0}
-                  capacity={m.capacity}
-                  unit={m.unit}
-                  threshold={m.low_threshold}
-                />
+                <div key={i} className="rounded-xl border border-border bg-card p-4 shadow-card space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-sm">{g.label}</h3>
+                    <FlaskConical className="h-4 w-4 text-purple-500" />
+                  </div>
+                  {lvl ? (
+                    <ChemicalGauge
+                      name={`Level — ${lvl.name}`}
+                      value={lvlLast ? Number(lvlLast.value) : 0}
+                      capacity={lvl.capacity}
+                      unit={lvl.unit}
+                      threshold={lvl.low_threshold}
+                    />
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-border p-3 text-xs text-muted-foreground">No level sensor</div>
+                  )}
+                  {flw ? (
+                    <div className="rounded-lg border border-border bg-card/60 p-3">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="font-medium truncate">Flow — {flw.name}</span>
+                        <span className="tabular-nums text-xs text-muted-foreground">
+                          {(flwLast ? Number(flwLast.value) : 0).toFixed(2)} {flw.unit}
+                        </span>
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-1">Latest flow reading</div>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-border p-3 text-xs text-muted-foreground">No flow meter</div>
+                  )}
+                </div>
               );
             })}
           </div>

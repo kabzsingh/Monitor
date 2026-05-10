@@ -24,7 +24,7 @@ interface Site {
   daily_report_enabled?: boolean;
   monthly_report_enabled?: boolean;
 }
-interface Meter { id: string; site_id: string; meter_type: "wash"|"fresh_water"|"chemical"; name: string; unit: string; capacity: number | null; low_threshold: number | null; device_key: string; position: number }
+interface Meter { id: string; site_id: string; meter_type: "wash"|"fresh_water"|"chemical"|"chemical_flow"; name: string; unit: string; capacity: number | null; low_threshold: number | null; device_key: string; position: number; chemical_group: string | null }
 interface ApiKeyRow { id: string; site_id: string; key_prefix: string; label: string | null; revoked: boolean; last_used_at: string | null; created_at: string }
 
 function AdminPage() {
@@ -94,6 +94,7 @@ function AdminPage() {
       capacity: m.capacity ?? null,
       low_threshold: m.low_threshold ?? null,
       device_key: m.device_key!,
+      chemical_group: m.chemical_group ?? null,
       position: meters.filter((x) => x.site_id === siteId).length,
     });
     if (error) return toast.error(error.message);
@@ -202,6 +203,7 @@ function SiteAdminCard({
   const [deviceKey, setDeviceKey] = useState("");
   const [capacity, setCapacity] = useState("");
   const [low, setLow] = useState("");
+  const [group, setGroup] = useState("");
 
   return (
     <div className="rounded-xl border border-border bg-card p-5 shadow-card">
@@ -230,6 +232,7 @@ function SiteAdminCard({
                   <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-accent text-primary">{m.device_key}</span>
                   <span className="font-medium">{m.name}</span>
                   <span className="text-xs text-muted-foreground capitalize">{m.meter_type.replace("_", " ")}</span>
+                  {m.chemical_group ? <span className="text-xs px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-600 dark:text-purple-400">{m.chemical_group}</span> : null}
                   {m.capacity ? <span className="text-xs text-muted-foreground">{m.capacity}{m.unit} cap</span> : null}
                 </div>
                 <Button variant="ghost" size="icon" onClick={() => onRemoveMeter(m.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
@@ -244,7 +247,8 @@ function SiteAdminCard({
             <SelectContent>
               <SelectItem value="wash">Wash</SelectItem>
               <SelectItem value="fresh_water">Fresh water</SelectItem>
-              <SelectItem value="chemical">Chemical</SelectItem>
+              <SelectItem value="chemical">Chemical level</SelectItem>
+              <SelectItem value="chemical_flow">Chemical flow</SelectItem>
             </SelectContent>
           </Select>
           <Input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
@@ -253,14 +257,20 @@ function SiteAdminCard({
           <Input placeholder="Capacity" type="number" value={capacity} onChange={(e) => setCapacity(e.target.value)} />
           <Input placeholder="Low alert" type="number" value={low} onChange={(e) => setLow(e.target.value)} />
         </div>
+        {(type === "chemical" || type === "chemical_flow") && (
+          <div className="mt-2">
+            <Input placeholder="Chemical group (e.g. Soap, Wax) — pair level + flow with same group" value={group} onChange={(e) => setGroup(e.target.value)} />
+          </div>
+        )}
         <Button size="sm" className="mt-2" onClick={() => {
           if (!name || !deviceKey) return toast.error("Name and device_key required");
           onAddMeter({
             meter_type: type, name, unit, device_key: deviceKey,
             capacity: capacity ? Number(capacity) : null,
             low_threshold: low ? Number(low) : null,
+            chemical_group: group.trim() || null,
           });
-          setName(""); setDeviceKey(""); setCapacity(""); setLow("");
+          setName(""); setDeviceKey(""); setCapacity(""); setLow(""); setGroup("");
         }}><Plus className="h-4 w-4" /> Add meter</Button>
       </div>
 
