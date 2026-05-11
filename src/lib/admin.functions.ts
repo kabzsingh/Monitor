@@ -5,9 +5,14 @@ import { z } from "zod";
 
 async function assertAdmin(userId: string) {
   const { data, error } = await supabaseAdmin
-    .from("user_roles").select("role").eq("user_id", userId).eq("role", "admin").maybeSingle();
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", userId)
+    .eq("role", "admin")
+    .maybeSingle();
+
   if (error) throw new Error(error.message || "Admin check failed");
-  if (!data) throw new Error("Forbidden: Admin access required");
+  if (!data) throw new Response("Forbidden", { status: 403 });
 }
 
 // Helper for Web Crypto hashing
@@ -15,23 +20,25 @@ async function sha256(message: string) {
   const msgUint8 = new TextEncoder().encode(message);
   const cryptoObj = globalThis.crypto;
   if (!cryptoObj?.subtle) {
-    throw new Error("Web Crypto Subtle API is not available. Ensure you are in a modern environment (Node 18+).");
+    throw new Error("Web Crypto Subtle API is not available.");
   }
   const hashBuffer = await cryptoObj.subtle.digest("SHA-256", msgUint8);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-// Generate a new site API key for ESP32 use. Returns plaintext ONCE.
+// Generate a new site API key for ESP32 use.
 export const createSiteApiKey = createServerFn({ method: "POST" })
-  .validator((data: any) => z.object({
-    siteId: z.string(),
-    label: z.string().max(60).optional()
-  }).parse(data))
   .middleware([requireSupabaseAuth])
   .handler(async ({ data, context }) => {
+    // Validate manually to avoid chainable method version issues
+    const parsed = z.object({
+      siteId: z.string(),
+      label: z.string().max(60).optional()
+    }).parse(data);
+
     await assertAdmin(context.userId);
-    const { siteId, label } = data;
+    const { siteId, label } = parsed;
 
     try {
       const bytes = new Uint8Array(24);
@@ -72,21 +79,22 @@ export const getSmtpSettings = createServerFn({ method: "GET" })
   });
 
 export const updateSmtpSettings = createServerFn({ method: "POST" })
-  .validator((data: any) => z.object({
-    host: z.string(),
-    port: z.number(),
-    user_email: z.string().email(),
-    password: z.string(),
-    from_name: z.string(),
-    from_email: z.string().email(),
-    encryption: z.enum(["tls", "ssl", "none"]),
-  }).parse(data))
   .middleware([requireSupabaseAuth])
   .handler(async ({ data, context }) => {
+    const parsed = z.object({
+      host: z.string(),
+      port: z.number(),
+      user_email: z.string().email(),
+      password: z.string(),
+      from_name: z.string(),
+      from_email: z.string().email(),
+      encryption: z.enum(["tls", "ssl", "none"]),
+    }).parse(data);
+
     await assertAdmin(context.userId);
     const { error } = await supabaseAdmin.from("smtp_settings").upsert({
       id: true,
-      ...data,
+      ...parsed,
       updated_at: new Date().toISOString(),
     });
     if (error) throw new Error(error.message);
