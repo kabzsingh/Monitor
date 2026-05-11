@@ -2,29 +2,86 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { z } from "zod";
-import crypto from "crypto";
 
 async function assertAdmin(userId: string) {
   const { data, error } = await supabaseAdmin
-    .from("user_roles").select("role").eq("user_id", userId).eq("role", "admin").maybeSingle();
-  if (error) throw new Error(error.message);
-  if (!data) throw new Response("Forbidden", { status: 403 });
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", userId)
+    .eq("role", "admin")
+    .maybeSingle();
+
+  if (error) {
+    console.error("Admin check error:", error);
+    throw new Error(`Admin check failed: ${error.message}`);
+  }
+  if (!data) {
+    console.warn(`User ${userId} attempted admin action without permission`);
+    throw new Error("Forbidden: Admin access required");
+  }
+}
+
+/**
+ * Helper to generate a SHA-256 hash using the Web Crypto API
+ */
+async function sha256(message: string): Promise<string> {
+  const msgUint8 = new TextEncoder().encode(message);
+  const hashBuffer = await globalThis.crypto.subtle.digest("SHA-256", msgUint8);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 // Generate a new site API key for ESP32 use. Returns plaintext ONCE.
 export const createSiteApiKey = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator(z.object({ siteId: z.string().uuid(), label: z.string().max(60).optional() }).parse)
+  .input(
+    z.object({
+      siteId: z.string(),
+      label: z.string().max(60).optional(),
+    })
+  )
   .handler(async ({ data, context }) => {
     await assertAdmin(context.userId);
-    const raw = "ws_live_" + crypto.randomBytes(24).toString("hex");
-    const hash = crypto.createHash("sha256").update(raw).digest("hex");
-    const prefix = raw.slice(0, 12);
-    const { error } = await supabaseAdmin.from("site_api_keys").insert({
-      site_id: data.siteId, key_hash: hash, key_prefix: prefix, label: data.label ?? null,
-    });
-    if (error) throw new Error(error.message);
-    return { apiKey: raw, prefix };
+    const { siteId, label } = data;
+
+    console.log(`[Admin] Generating API key for site: ${siteId}`);
+
+    try {
+      // Generate 24 random bytes for a strong key
+      const bytes = new Uint8Array(24);
+      globalThis.crypto.getRandomValues(bytes);
+
+      // Convert to hex string
+      const hex = Array.from(bytes)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+
+      const rawKey = "ws_live_" + hex;
+
+      // Compute hash for secure storage
+      const hashedKey = await sha256(rawKey);
+
+      // First 12 characters are used for identification in the UI (non-secret part)
+      const displayPrefix = rawKey.slice(0, 12);
+
+      const { error: dbError } = await supabaseAdmin.from("site_api_keys").insert({
+        site_id: siteId,
+        key_hash: hashedKey,
+        key_prefix: displayPrefix,
+        label: label || "ESP32",
+      });
+
+      if (dbError) {
+        console.error("[Admin] Database error inserting API key:", dbError);
+        throw new Error(`Database error: ${dbError.message}`);
+      }
+
+      console.log(`[Admin] Successfully generated API key for site: ${siteId}`);
+      return { apiKey: rawKey, prefix: displayPrefix };
+    } catch (err: any) {
+      console.error("[Admin] Critical failure in createSiteApiKey:", err);
+      throw new Error(err.message || "An unexpected error occurred generating the API key");
+    }
   });
 
 export const getSmtpSettings = createServerFn({ method: "GET" })
@@ -38,15 +95,17 @@ export const getSmtpSettings = createServerFn({ method: "GET" })
 
 export const updateSmtpSettings = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator(z.object({
-    host: z.string(),
-    port: z.number(),
-    user_email: z.string().email(),
-    password: z.string(),
-    from_name: z.string(),
-    from_email: z.string().email(),
-    encryption: z.enum(["tls", "ssl", "none"]),
-  }).parse)
+  .input(
+    z.object({
+      host: z.string(),
+      port: z.number(),
+      user_email: z.string().email(),
+      password: z.string(),
+      from_name: z.string(),
+      from_email: z.string().email(),
+      encryption: z.enum(["tls", "ssl", "none"]),
+    })
+  )
   .handler(async ({ data, context }) => {
     await assertAdmin(context.userId);
     const { error } = await supabaseAdmin.from("smtp_settings").upsert({
@@ -61,12 +120,10 @@ export const updateSmtpSettings = createServerFn({ method: "POST" })
 export const grantAdminBootstrap = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    // Bootstrap: if there are zero admins yet, the calling user becomes admin.
     const { count, error: cErr } = await supabaseAdmin
       .from("user_roles").select("*", { count: "exact", head: true }).eq("role", "admin");
     if (cErr) throw new Error(cErr.message);
     if ((count ?? 0) > 0) {
-      // Only existing admins can grant — return current state
       const { data: me } = await supabaseAdmin
         .from("user_roles").select("role").eq("user_id", context.userId).eq("role", "admin").maybeSingle();
       return { granted: false, isAdmin: !!me };
@@ -76,7 +133,6 @@ export const grantAdminBootstrap = createServerFn({ method: "POST" })
     return { granted: true, isAdmin: true };
   });
 
-// Demo data seeder for first-time admins
 export const seedDemoData = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
@@ -106,12 +162,10 @@ export const seedDemoData = createServerFn({ method: "POST" })
         .select("id,meter_type,device_key,capacity");
       if (mErr) throw new Error(mErr.message);
 
-      // Seed 24h of readings
       const now = Date.now();
       const readings: any[] = [];
       for (const m of insertedMeters!) {
         if (m.meter_type === "chemical") {
-          // single recent level
           readings.push({
             site_id: site!.id, meter_id: m.id,
             value: Math.max(5, (m.capacity ?? 100) * (0.2 + Math.random() * 0.7)),
