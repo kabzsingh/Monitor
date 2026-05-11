@@ -44,6 +44,10 @@ export function MeterCard({
         ? "Fresh Water"
         : "Chemical";
 
+  const isWash = meterType === "wash";
+  const fmt = (n: number) => (isWash ? Math.round(n).toLocaleString() : n.toFixed(1));
+  const unitLabel = isWash ? "washes" : unit;
+
   // Calculate percentage if capacity exists
   const percentage =
     capacity && capacity > 0 ? (value / capacity) * 100 : null;
@@ -77,10 +81,10 @@ export function MeterCard({
       {/* Value Display */}
       <div className="mb-3">
         <div className="text-2xl font-bold tabular-nums">
-          {value.toFixed(1)}
-          <span className="text-xs text-muted-foreground ml-1">{unit}</span>
+          {fmt(value)}
+          <span className="text-xs text-muted-foreground ml-1">{unitLabel}</span>
         </div>
-        {capacity && (
+        {capacity && !isWash && (
           <div className="text-xs text-muted-foreground mt-1">
             Capacity: {capacity}
             {unit}
@@ -93,13 +97,13 @@ export function MeterCard({
           {today != null && (
             <div className="rounded-md bg-secondary/60 px-2 py-1.5">
               <div className="text-muted-foreground">Today</div>
-              <div className="font-semibold tabular-nums">{today.toFixed(1)} {unit}</div>
+              <div className="font-semibold tabular-nums">{fmt(today)} {unitLabel}</div>
             </div>
           )}
           {total != null && (
             <div className="rounded-md bg-secondary/60 px-2 py-1.5">
               <div className="text-muted-foreground">Total</div>
-              <div className="font-semibold tabular-nums">{total.toFixed(1)} {unit}</div>
+              <div className="font-semibold tabular-nums">{fmt(total)} {unitLabel}</div>
             </div>
           )}
         </div>
