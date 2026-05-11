@@ -47,6 +47,8 @@ function SiteDetail() {
   } | null>(null);
   const [meters, setMeters] = useState<Meter[]>([]);
   const [readings, setReadings] = useState<Reading[]>([]);
+  const [totals, setTotals] = useState<Record<string, number>>({});
+  const [todays, setTodays] = useState<Record<string, number>>({});
 
   const load = async () => {
     const [{ data: s }, { data: m }] = await Promise.all([
@@ -74,6 +76,27 @@ function SiteDetail() {
       .order("recorded_at", { ascending: true })
       .limit(5000);
     setReadings((r as any) ?? []);
+
+    // Lifetime totals per meter (aggregate)
+    const { data: tot } = await supabase
+      .from("readings")
+      .select("meter_id, total:value.sum()")
+      .eq("site_id", siteId);
+    const totMap: Record<string, number> = {};
+    for (const row of (tot as any[]) ?? []) totMap[row.meter_id] = Number(row.total) || 0;
+    setTotals(totMap);
+
+    // Today totals per meter (aggregate)
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const { data: td } = await supabase
+      .from("readings")
+      .select("meter_id, total:value.sum()")
+      .eq("site_id", siteId)
+      .gte("recorded_at", startOfDay.toISOString());
+    const tdMap: Record<string, number> = {};
+    for (const row of (td as any[]) ?? []) tdMap[row.meter_id] = Number(row.total) || 0;
+    setTodays(tdMap);
   };
 
   useEffect(() => {
@@ -98,38 +121,26 @@ function SiteDetail() {
   }, [siteId]);
 
   const stats = useMemo(() => {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    const startMs = start.getTime();
-    let washToday = 0,
-      washLifetime = 0,
-      freshToday = 0,
-      freshLifetime = 0;
     const latestByMeter = new Map<string, Reading>();
     for (const r of readings) {
       const meter = meters.find((m) => m.id === r.meter_id);
       if (!meter) continue;
-      const ts = new Date(r.recorded_at).getTime();
-      if (meter.meter_type === "wash") {
-        washLifetime += Number(r.value);
-        if (ts >= startMs) washToday += Number(r.value);
-      } else if (meter.meter_type === "fresh_water") {
-        freshLifetime += Number(r.value);
-        if (ts >= startMs) freshToday += Number(r.value);
-      } else if (meter.meter_type === "chemical" || meter.meter_type === "chemical_flow") {
+      if (meter.meter_type === "chemical" || meter.meter_type === "chemical_flow") {
         const prev = latestByMeter.get(r.meter_id);
         if (!prev || prev.recorded_at < r.recorded_at)
           latestByMeter.set(r.meter_id, r);
       }
     }
+    const sumBy = (type: Meter["meter_type"], src: Record<string, number>) =>
+      meters.filter((m) => m.meter_type === type).reduce((s, m) => s + (src[m.id] ?? 0), 0);
     return {
-      washToday,
-      washLifetime,
-      freshToday,
-      freshLifetime,
+      washToday: sumBy("wash", todays),
+      washLifetime: sumBy("wash", totals),
+      freshToday: sumBy("fresh_water", todays),
+      freshLifetime: sumBy("fresh_water", totals),
       latestByMeter,
     };
-  }, [readings, meters]);
+  }, [readings, meters, totals, todays]);
 
   const chemicalLevelMeters = meters.filter((m) => m.meter_type === "chemical");
   const chemicalFlowMeters = meters.filter((m) => m.meter_type === "chemical_flow");
@@ -225,9 +236,8 @@ function SiteDetail() {
         />
         <StatCard
           icon={Activity}
-          label="Wash lifetime"
+          label="Wash total"
           value={stats.washLifetime.toLocaleString()}
-          sub="Last 24h shown"
         />
         <StatCard
           icon={Droplets}
@@ -274,6 +284,8 @@ function SiteDetail() {
                     unit={m.unit}
                     capacity={m.capacity}
                     lowThreshold={m.low_threshold}
+                    today={todays[m.id] ?? 0}
+                    total={totals[m.id] ?? 0}
                   />
                   <AdminAdjust meterId={m.id} siteId={siteId} unit={m.unit} onSaved={load} />
                 </div>
@@ -290,6 +302,8 @@ function SiteDetail() {
                     unit={m.unit}
                     capacity={m.capacity}
                     lowThreshold={m.low_threshold}
+                    today={todays[m.id] ?? 0}
+                    total={totals[m.id] ?? 0}
                   />
                   <AdminAdjust meterId={m.id} siteId={siteId} unit={m.unit} onSaved={load} />
                 </div>
@@ -329,6 +343,9 @@ function SiteDetail() {
               const flw = g.flow;
               const lvlLast = lvl ? stats.latestByMeter.get(lvl.id) : undefined;
               const flwLast = flw ? stats.latestByMeter.get(flw.id) : undefined;
+              const flwToday = flw ? (todays[flw.id] ?? 0) : 0;
+              const flwTotal = flw ? (totals[flw.id] ?? 0) : 0;
+              const perWash = flw && stats.washToday > 0 ? flwToday / stats.washToday : null;
               return (
                 <div key={i} className="rounded-xl border border-border bg-card p-4 shadow-card space-y-3">
                   <div className="flex items-center justify-between">
@@ -355,7 +372,22 @@ function SiteDetail() {
                           {(flwLast ? Number(flwLast.value) : 0).toFixed(2)} {flw.unit}
                         </span>
                       </div>
-                      <div className="text-xs text-muted-foreground mt-1">Latest flow reading</div>
+                      <div className="grid grid-cols-3 gap-2 mt-2 text-xs">
+                        <div className="rounded bg-secondary/60 px-2 py-1">
+                          <div className="text-muted-foreground">Today</div>
+                          <div className="font-semibold tabular-nums">{flwToday.toFixed(2)} {flw.unit}</div>
+                        </div>
+                        <div className="rounded bg-secondary/60 px-2 py-1">
+                          <div className="text-muted-foreground">Total</div>
+                          <div className="font-semibold tabular-nums">{flwTotal.toFixed(2)} {flw.unit}</div>
+                        </div>
+                        <div className="rounded bg-secondary/60 px-2 py-1">
+                          <div className="text-muted-foreground">Per wash</div>
+                          <div className="font-semibold tabular-nums">
+                            {perWash != null ? `${perWash.toFixed(2)} ${flw.unit}` : "—"}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   ) : (
                     <div className="rounded-lg border border-dashed border-border p-3 text-xs text-muted-foreground">No flow meter</div>
