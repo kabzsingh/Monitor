@@ -7,35 +7,37 @@ async function assertAdmin(userId: string) {
   const { data, error } = await supabaseAdmin
     .from("user_roles").select("role").eq("user_id", userId).eq("role", "admin").maybeSingle();
   if (error) throw new Error(error.message || "Admin check failed");
-  if (!data) throw new Response("Forbidden", { status: 403 });
+  if (!data) throw new Error("Forbidden: Admin access required");
 }
 
-// Helper for Web Crypto hashing
-async function sha256(message: string) {
-  const msgUint8 = new TextEncoder().encode(message);
-  const hashBuffer = await globalThis.crypto.subtle.digest("SHA-256", msgUint8);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-// Generate a new site API key for ESP32 use. Returns plaintext ONCE.
 export const createSiteApiKey = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .validator((data: { siteId: string; label?: string }) => z.object({
+  .validator((data: any) => z.object({
     siteId: z.string(),
     label: z.string().max(60).optional()
   }).parse(data))
+  .middleware([requireSupabaseAuth])
   .handler(async ({ data, context }) => {
     await assertAdmin(context.userId);
     const { siteId, label } = data;
 
     try {
       const bytes = new Uint8Array(24);
-      globalThis.crypto.getRandomValues(bytes);
+      // Use globalThis.crypto for broad environment compatibility
+      if (typeof globalThis.crypto !== 'undefined' && globalThis.crypto.getRandomValues) {
+        globalThis.crypto.getRandomValues(bytes);
+      } else {
+        // Fallback for older environments
+        for (let i = 0; i < 24; i++) bytes[i] = Math.floor(Math.random() * 256);
+      }
       const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
       const raw = "ws_live_" + hex;
 
-      const hash = await sha256(raw);
+      // SHA-256 hash using Web Crypto API
+      const msgUint8 = new TextEncoder().encode(raw);
+      const hashBuffer = await globalThis.crypto.subtle.digest("SHA-256", msgUint8);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const hash = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+
       const prefix = raw.slice(0, 12);
 
       const { error: insertErr } = await supabaseAdmin.from("site_api_keys").insert({
@@ -62,7 +64,6 @@ export const getSmtpSettings = createServerFn({ method: "GET" })
   });
 
 export const updateSmtpSettings = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
   .validator((data: any) => z.object({
     host: z.string(),
     port: z.number(),
@@ -72,6 +73,7 @@ export const updateSmtpSettings = createServerFn({ method: "POST" })
     from_email: z.string().email(),
     encryption: z.enum(["tls", "ssl", "none"]),
   }).parse(data))
+  .middleware([requireSupabaseAuth])
   .handler(async ({ data, context }) => {
     await assertAdmin(context.userId);
     const { error } = await supabaseAdmin.from("smtp_settings").upsert({
@@ -86,7 +88,6 @@ export const updateSmtpSettings = createServerFn({ method: "POST" })
 export const grantAdminBootstrap = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    // Bootstrap: if there are zero admins yet, the calling user becomes admin.
     const { count, error: cErr } = await supabaseAdmin
       .from("user_roles").select("*", { count: "exact", head: true }).eq("role", "admin");
     if (cErr) throw new Error(cErr.message);
