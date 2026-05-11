@@ -10,6 +10,19 @@ async function assertAdmin(userId: string) {
   if (!data) throw new Error("Forbidden: Admin access required");
 }
 
+// Helper for Web Crypto hashing
+async function sha256(message: string) {
+  const msgUint8 = new TextEncoder().encode(message);
+  const cryptoObj = globalThis.crypto;
+  if (!cryptoObj?.subtle) {
+    throw new Error("Web Crypto Subtle API is not available. Ensure you are in a modern environment (Node 18+).");
+  }
+  const hashBuffer = await cryptoObj.subtle.digest("SHA-256", msgUint8);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Generate a new site API key for ESP32 use. Returns plaintext ONCE.
 export const createSiteApiKey = createServerFn({ method: "POST" })
   .validator((data: any) => z.object({
     siteId: z.string(),
@@ -22,22 +35,11 @@ export const createSiteApiKey = createServerFn({ method: "POST" })
 
     try {
       const bytes = new Uint8Array(24);
-      // Use globalThis.crypto for broad environment compatibility
-      if (typeof globalThis.crypto !== 'undefined' && globalThis.crypto.getRandomValues) {
-        globalThis.crypto.getRandomValues(bytes);
-      } else {
-        // Fallback for older environments
-        for (let i = 0; i < 24; i++) bytes[i] = Math.floor(Math.random() * 256);
-      }
+      globalThis.crypto.getRandomValues(bytes);
       const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
       const raw = "ws_live_" + hex;
 
-      // SHA-256 hash using Web Crypto API
-      const msgUint8 = new TextEncoder().encode(raw);
-      const hashBuffer = await globalThis.crypto.subtle.digest("SHA-256", msgUint8);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      const hash = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-
+      const hash = await sha256(raw);
       const prefix = raw.slice(0, 12);
 
       const { error: insertErr } = await supabaseAdmin.from("site_api_keys").insert({
@@ -50,6 +52,7 @@ export const createSiteApiKey = createServerFn({ method: "POST" })
       if (insertErr) throw new Error(insertErr.message);
       return { apiKey: raw, prefix };
     } catch (err: any) {
+      console.error("Error creating API key:", err);
       throw new Error(err.message || "Failed to generate key");
     }
   });
@@ -58,9 +61,14 @@ export const getSmtpSettings = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     await assertAdmin(context.userId);
-    const { data, error } = await supabaseAdmin.from("smtp_settings").select("*").eq("id", true).maybeSingle();
-    if (error) throw new Error(error.message);
-    return data;
+    try {
+      const { data, error } = await supabaseAdmin.from("smtp_settings").select("*").eq("id", true).maybeSingle();
+      if (error) throw new Error(error.message);
+      return data;
+    } catch (e: any) {
+      console.error("Error fetching SMTP settings:", e.message);
+      return null;
+    }
   });
 
 export const updateSmtpSettings = createServerFn({ method: "POST" })
@@ -88,19 +96,24 @@ export const updateSmtpSettings = createServerFn({ method: "POST" })
 export const grantAdminBootstrap = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    const { count, error: cErr } = await supabaseAdmin
-      .from("user_roles").select("*", { count: "exact", head: true }).eq("role", "admin");
-    if (cErr) throw new Error(cErr.message);
+    try {
+      const { count, error: cErr } = await supabaseAdmin
+        .from("user_roles").select("*", { count: "exact", head: true }).eq("role", "admin");
+      if (cErr) throw new Error(cErr.message);
 
-    if ((count ?? 0) > 0) {
-      const { data: me } = await supabaseAdmin
-        .from("user_roles").select("role").eq("user_id", context.userId).eq("role", "admin").maybeSingle();
-      return { granted: false, isAdmin: !!me };
+      if ((count ?? 0) > 0) {
+        const { data: me } = await supabaseAdmin
+          .from("user_roles").select("role").eq("user_id", context.userId).eq("role", "admin").maybeSingle();
+        return { granted: false, isAdmin: !!me };
+      }
+
+      const { error } = await supabaseAdmin.from("user_roles").insert({ user_id: context.userId, role: "admin" });
+      if (error) throw new Error(error.message);
+      return { granted: true, isAdmin: true };
+    } catch (e: any) {
+      console.error("Bootstrap error:", e.message);
+      return { granted: false, isAdmin: false };
     }
-
-    const { error } = await supabaseAdmin.from("user_roles").insert({ user_id: context.userId, role: "admin" });
-    if (error) throw new Error(error.message);
-    return { granted: true, isAdmin: true };
   });
 
 export const seedDemoData = createServerFn({ method: "POST" })
