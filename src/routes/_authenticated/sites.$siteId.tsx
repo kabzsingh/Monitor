@@ -77,23 +77,19 @@ function SiteDetail() {
       .limit(5000);
     setReadings((r as any) ?? []);
 
-    // Lifetime totals per meter (aggregate)
-    const { data: tot } = await supabase
-      .from("readings")
-      .select("meter_id, total:value.sum()")
-      .eq("site_id", siteId);
+    // Lifetime totals per meter (RPC aggregate)
+    const { data: tot } = await supabase.rpc("meter_totals", { _site_id: siteId });
     const totMap: Record<string, number> = {};
     for (const row of (tot as any[]) ?? []) totMap[row.meter_id] = Number(row.total) || 0;
     setTotals(totMap);
 
-    // Today totals per meter (aggregate)
+    // Today totals per meter (RPC aggregate)
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
-    const { data: td } = await supabase
-      .from("readings")
-      .select("meter_id, total:value.sum()")
-      .eq("site_id", siteId)
-      .gte("recorded_at", startOfDay.toISOString());
+    const { data: td } = await supabase.rpc("meter_totals_since", {
+      _site_id: siteId,
+      _since: startOfDay.toISOString(),
+    });
     const tdMap: Record<string, number> = {};
     for (const row of (td as any[]) ?? []) tdMap[row.meter_id] = Number(row.total) || 0;
     setTodays(tdMap);

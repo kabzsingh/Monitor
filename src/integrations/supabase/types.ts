@@ -309,6 +309,20 @@ export type Database = {
         }
         Returns: boolean
       }
+      meter_totals: {
+        Args: { _site_id: string }
+        Returns: {
+          meter_id: string
+          total: number
+        }[]
+      }
+      meter_totals_since: {
+        Args: { _since: string; _site_id: string }
+        Returns: {
+          meter_id: string
+          total: number
+        }[]
+      }
     }
     Enums: {
       app_role: "admin" | "operator"
