@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { createSiteApiKey, grantAdminBootstrap, seedDemoData, getSmtpSettings, updateSmtpSettings } from "@/lib/admin.functions";
-import { Copy, Plus, Trash2, KeyRound, Sparkles, Cpu, Mail, Send, Server, ShieldCheck } from "lucide-react";
+import { Copy, Plus, Trash2, KeyRound, Sparkles, Cpu, Mail, Send, Server, ShieldCheck, Loader2 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 
@@ -28,7 +28,7 @@ interface Meter { id: string; site_id: string; meter_type: "wash"|"fresh_water"|
 interface ApiKeyRow { id: string; site_id: string; key_prefix: string; label: string | null; revoked: boolean; last_used_at: string | null; created_at: string }
 
 function AdminPage() {
-  const { isAdmin, refreshRoles, user } = useAuth();
+  const { isAdmin, refreshRoles, user, loading } = useAuth();
   const nav = useNavigate();
   const bootstrap = useServerFn(grantAdminBootstrap);
   const seed = useServerFn(seedDemoData);
@@ -40,8 +40,10 @@ function AdminPage() {
   const [newSiteLoc, setNewSiteLoc] = useState("");
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const [sketchSite, setSketchSite] = useState<Site | null>(null);
+  const [isBootstrapping, setIsBootstrapping] = useState(false);
 
   const load = async () => {
+    if (!isAdmin) return;
     const [{ data: s }, { data: m }, { data: k }] = await Promise.all([
       supabase.from("sites").select("id,name,location,timezone,report_hour,report_recipients,daily_report_enabled,monthly_report_enabled").order("created_at"),
       supabase.from("site_meters").select("*").order("position"),
@@ -54,18 +56,47 @@ function AdminPage() {
 
   useEffect(() => {
     // bootstrap: first user becomes admin if no admins exist yet
+    setIsBootstrapping(true);
     bootstrap().then(async (res) => {
-      if (res.granted) { await refreshRoles(); toast.success("You're set as admin (first user)"); }
-      load();
-    }).catch(() => load());
+      if (res.granted || res.isAdmin) {
+        await refreshRoles();
+        if (res.granted) toast.success("You're set as admin (first user)");
+      }
+      setIsBootstrapping(false);
+    }).catch(() => {
+      setIsBootstrapping(false);
+    });
   }, []); // eslint-disable-line
+
+  useEffect(() => {
+    if (isAdmin) {
+      load();
+    }
+  }, [isAdmin]);
+
+  if (loading || isBootstrapping) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="text-sm text-muted-foreground">Verifying admin access...</p>
+      </div>
+    );
+  }
 
   if (!isAdmin) {
     return (
       <div className="max-w-md mx-auto rounded-xl border border-border bg-card p-6 text-center">
-        <h2 className="font-semibold">Admins only</h2>
-        <p className="text-sm text-muted-foreground mt-1">{user?.email} doesn't have admin access yet.</p>
-        <Button className="mt-4" onClick={() => nav({ to: "/dashboard" })}>Back to dashboard</Button>
+        <div className="flex justify-center mb-4">
+          <ShieldCheck className="h-12 w-12 text-muted-foreground opacity-20" />
+        </div>
+        <h2 className="font-semibold text-xl">Admins only</h2>
+        <p className="text-sm text-muted-foreground mt-2">
+          {user?.email} doesn't have admin access. If you're the first user, the system should have auto-granted access.
+        </p>
+        <div className="flex flex-col gap-2 mt-6">
+          <Button onClick={() => window.location.reload()}>Retry Access</Button>
+          <Button variant="ghost" onClick={() => nav({ to: "/dashboard" })}>Back to dashboard</Button>
+        </div>
       </div>
     );
   }
@@ -171,7 +202,7 @@ function AdminPage() {
       <Dialog open={!!revealedKey} onOpenChange={(o) => { if (!o) setRevealedKey(null); }}>
         <DialogContent>
           <DialogHeader><DialogTitle>API key created</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">Copy this key now — it won't be shown again. Configure your ESP32 to send it in the <code className="text-foreground">x-site-api-key</code> header.</p>
+          <p className="text-sm text-muted-foreground">Copy this key now — it won''t be shown again. Configure your ESP32 to send it in the <code className="text-foreground">x-site-api-key</code> header.</p>
           <div className="rounded-lg bg-secondary p-3 font-mono text-xs break-all">{revealedKey}</div>
           <Button onClick={() => { navigator.clipboard.writeText(revealedKey ?? ""); toast.success("Copied"); }}>
             <Copy className="h-4 w-4" /> Copy
@@ -214,7 +245,7 @@ function SmtpSettingsPanel() {
         setEncryption(data.encryption as any);
       }
       setLoading(false);
-    });
+    }).catch(() => setLoading(false));
   }, []); // eslint-disable-line
 
   const handleSave = async () => {
