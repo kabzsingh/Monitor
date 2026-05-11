@@ -8,6 +8,8 @@ export function MeterCard({
   unit,
   capacity,
   lowThreshold,
+  today,
+  total,
 }: {
   name: string;
   meterType: "wash" | "fresh_water" | "chemical";
@@ -15,6 +17,8 @@ export function MeterCard({
   unit: string;
   capacity?: number | null;
   lowThreshold?: number | null;
+  today?: number | null;
+  total?: number | null;
 }) {
   const Icon = meterType === "fresh_water" ? Droplets : Gauge;
 
@@ -83,6 +87,23 @@ export function MeterCard({
           </div>
         )}
       </div>
+
+      {(today != null || total != null) && (
+        <div className="grid grid-cols-2 gap-2 mb-3 text-xs">
+          {today != null && (
+            <div className="rounded-md bg-secondary/60 px-2 py-1.5">
+              <div className="text-muted-foreground">Today</div>
+              <div className="font-semibold tabular-nums">{today.toFixed(1)} {unit}</div>
+            </div>
+          )}
+          {total != null && (
+            <div className="rounded-md bg-secondary/60 px-2 py-1.5">
+              <div className="text-muted-foreground">Total</div>
+              <div className="font-semibold tabular-nums">{total.toFixed(1)} {unit}</div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Progress Bar (if capacity exists) */}
       {capacity && (
