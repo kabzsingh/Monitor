@@ -9,8 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { createSiteApiKey, grantAdminBootstrap, seedDemoData } from "@/lib/admin.functions";
-import { Copy, Plus, Trash2, KeyRound, Sparkles, Cpu, Mail, Send } from "lucide-react";
+import { createSiteApiKey, grantAdminBootstrap, seedDemoData, getSmtpSettings, updateSmtpSettings } from "@/lib/admin.functions";
+import { Copy, Plus, Trash2, KeyRound, Sparkles, Cpu, Mail, Send, Server, ShieldCheck } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 
@@ -110,7 +110,7 @@ function AdminPage() {
   const generateKey = useServerFn(createSiteApiKey);
   const handleGenKey = async (siteId: string) => {
     try {
-      const res = await generateKey({ data: { siteId, label: "ESP32" } });
+      const res = await generateKey({ siteId, label: "ESP32" });
       setRevealedKey(res.apiKey);
       load();
     } catch (e: any) { toast.error(e.message ?? "Failed"); }
@@ -123,7 +123,7 @@ function AdminPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-12">
       <div className="flex items-end justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">Admin</h1>
@@ -133,6 +133,8 @@ function AdminPage() {
           const r = await seed(); if (r.seeded) { toast.success("Demo sites seeded"); load(); } else toast.info("Sites already exist — skipped seed");
         }}><Sparkles className="h-4 w-4" /> Seed demo data</Button>
       </div>
+
+      <SmtpSettingsPanel />
 
       <div className="rounded-xl border border-border bg-card p-5 shadow-card">
         <h2 className="font-semibold mb-3">New site</h2>
@@ -182,6 +184,107 @@ function AdminPage() {
         meters={sketchSite ? meters.filter((m) => m.site_id === sketchSite.id) : []}
         onClose={() => setSketchSite(null)}
       />
+    </div>
+  );
+}
+
+function SmtpSettingsPanel() {
+  const get = useServerFn(getSmtpSettings);
+  const update = useServerFn(updateSmtpSettings);
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [host, setHost] = useState("");
+  const [port, setPort] = useState("587");
+  const [userEmail, setUserEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [fromName, setFromName] = useState("Wash Dashboard");
+  const [fromEmail, setFromEmail] = useState("");
+  const [encryption, setEncryption] = useState<"tls" | "ssl" | "none">("tls");
+
+  useEffect(() => {
+    get().then((data) => {
+      if (data) {
+        setHost(data.host);
+        setPort(String(data.port));
+        setUserEmail(data.user_email);
+        setPassword(data.password);
+        setFromName(data.from_name);
+        setFromEmail(data.from_email);
+        setEncryption(data.encryption as any);
+      }
+      setLoading(false);
+    });
+  }, []); // eslint-disable-line
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await update({
+        host, port: Number(port), user_email: userEmail, password,
+        from_name: fromName, from_email: fromEmail, encryption
+      });
+      toast.success("SMTP settings updated");
+    } catch (e: any) {
+      toast.error(e.message ?? "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return null;
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-5 shadow-card">
+      <div className="flex items-center gap-2 mb-4">
+        <Server className="h-5 w-5 text-primary" />
+        <h2 className="font-semibold text-lg">SMTP Configuration</h2>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="space-y-1.5">
+          <Label>SMTP Host</Label>
+          <Input value={host} onChange={(e) => setHost(e.target.value)} placeholder="smtp.gmail.com" />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Port</Label>
+          <Input type="number" value={port} onChange={(e) => setPort(e.target.value)} placeholder="587" />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Encryption</Label>
+          <Select value={encryption} onValueChange={(v) => setEncryption(v as any)}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="tls">TLS (STARTTLS)</SelectItem>
+              <SelectItem value="ssl">SSL</SelectItem>
+              <SelectItem value="none">None</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label>SMTP User / Email</Label>
+          <Input value={userEmail} onChange={(e) => setUserEmail(e.target.value)} placeholder="user@example.com" />
+        </div>
+        <div className="space-y-1.5">
+          <Label>SMTP Password</Label>
+          <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Sender Name</Label>
+          <Input value={fromName} onChange={(e) => setFromName(e.target.value)} placeholder="Wash Reports" />
+        </div>
+        <div className="sm:col-span-2 space-y-1.5">
+          <Label>Sender Email Address</Label>
+          <Input value={fromEmail} onChange={(e) => setFromEmail(e.target.value)} placeholder="reports@example.com" />
+        </div>
+        <div className="flex items-end">
+          <Button onClick={handleSave} className="w-full" disabled={saving}>
+            {saving ? "Saving..." : "Update SMTP Settings"}
+          </Button>
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground mt-3">
+        Once configured, reports will be sent via this SMTP server instead of the default Gmail connector.
+      </p>
     </div>
   );
 }
@@ -378,7 +481,7 @@ function ReportSettings({ site, onSaved }: { site: Site; onSaved: () => void }) 
           <Switch checked={monthly} onCheckedChange={setMonthly} />
         </label>
       </div>
-      <p className="text-xs text-muted-foreground mt-2">Reports are sent from your connected Gmail account.</p>
+      <p className="text-xs text-muted-foreground mt-2">Reports are sent using your configured SMTP settings.</p>
     </div>
   );
 }

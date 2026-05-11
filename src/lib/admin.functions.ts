@@ -27,6 +27,37 @@ export const createSiteApiKey = createServerFn({ method: "POST" })
     return { apiKey: raw, prefix };
   });
 
+export const getSmtpSettings = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await assertAdmin(context.userId);
+    const { data, error } = await supabaseAdmin.from("smtp_settings").select("*").eq("id", true).maybeSingle();
+    if (error) throw new Error(error.message);
+    return data;
+  });
+
+export const updateSmtpSettings = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(z.object({
+    host: z.string(),
+    port: z.number(),
+    user_email: z.string().email(),
+    password: z.string(),
+    from_name: z.string(),
+    from_email: z.string().email(),
+    encryption: z.enum(["tls", "ssl", "none"]),
+  }).parse)
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context.userId);
+    const { error } = await supabaseAdmin.from("smtp_settings").upsert({
+      id: true,
+      ...data,
+      updated_at: new Date().toISOString(),
+    });
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
 export const grantAdminBootstrap = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {

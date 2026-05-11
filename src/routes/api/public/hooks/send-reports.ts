@@ -1,10 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import nodemailer from "nodemailer";
 
 const GMAIL_GATEWAY = "https://connector-gateway.lovable.dev/google_mail/gmail/v1";
 
 function b64url(s: string) {
-  // Use Buffer (Node available with nodejs_compat) for accurate UTF-8 handling
   return Buffer.from(s, "utf-8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
@@ -49,8 +49,9 @@ async function sendGmail(
 ) {
   const LOVABLE_API_KEY = process.env.LOVABLE_API_KEY;
   const GOOGLE_MAIL_API_KEY = process.env.GOOGLE_MAIL_API_KEY;
-  if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY missing");
-  if (!GOOGLE_MAIL_API_KEY) throw new Error("GOOGLE_MAIL_API_KEY missing");
+  if (!LOVABLE_API_KEY || !GOOGLE_MAIL_API_KEY) {
+    throw new Error("SMTP not configured and Gmail credentials missing");
+  }
   const raw = buildRawWithAttachment(to, subject, text, attachment);
   const res = await fetch(`${GMAIL_GATEWAY}/users/me/messages/send`, {
     method: "POST",
@@ -65,6 +66,50 @@ async function sendGmail(
     const t = await res.text();
     throw new Error(`Gmail ${res.status}: ${t.slice(0, 300)}`);
   }
+}
+
+async function sendEmail(
+  to: string[],
+  subject: string,
+  text: string,
+  attachment: { filename: string; mime: string; content: string },
+) {
+  // Try fetching SMTP settings
+  const { data: smtp } = await supabaseAdmin.from("smtp_settings").select("*").eq("id", true).maybeSingle();
+
+  if (smtp && smtp.host && smtp.user_email) {
+    try {
+      const transporter = nodemailer.createTransport({
+        host: smtp.host,
+        port: smtp.port,
+        secure: smtp.encryption === "ssl",
+        auth: {
+          user: smtp.user_email,
+          pass: smtp.password,
+        },
+      });
+
+      await transporter.sendMail({
+        from: `"${smtp.from_name}" <${smtp.from_email}>`,
+        to: to.join(", "),
+        subject,
+        text,
+        attachments: [
+          {
+            filename: attachment.filename,
+            content: attachment.content,
+            contentType: attachment.mime,
+          },
+        ],
+      });
+      return;
+    } catch (e: any) {
+      console.error("SMTP send failed, falling back to Gmail if available:", e);
+    }
+  }
+
+  // Fallback to Gmail connector
+  await sendGmail(to, subject, text, attachment);
 }
 
 // Returns { hour, dayOfMonth, ymd } in the given IANA timezone for a given instant.
@@ -123,12 +168,10 @@ async function buildDailyReport(site: any, meters: any[]) {
   // start/end of that local day -> UTC bounds (approx via Date construction in tz)
   const startLocal = new Date(`${ymd}T00:00:00`);
   const endLocal = new Date(`${ymd}T23:59:59.999`);
-  // crude UTC offset using Intl: not perfect for DST edges but acceptable here
   const fromIso = new Date(startLocal.toISOString()).toISOString();
   const toIso = new Date(endLocal.getTime() + 1).toISOString();
 
   const readings = await fetchReadings(site.id, fromIso, toIso);
-  // hour buckets
   const buckets = new Map<string, Map<string, number[]>>();
   for (const r of readings) {
     const d = new Date(r.recorded_at);
@@ -168,7 +211,6 @@ async function buildDailyReport(site: any, meters: any[]) {
 
 async function buildMonthlyReport(site: any, meters: any[]) {
   const tz = site.timezone || "UTC";
-  // previous month
   const now = new Date();
   const localToday = nowInTz(tz, now);
   const [y, m] = localToday.ym.split("-").map(Number);
@@ -176,14 +218,13 @@ async function buildMonthlyReport(site: any, meters: any[]) {
   const prevYear = m === 1 ? y - 1 : y;
   const ym = `${prevYear}-${String(prevMonth).padStart(2, "0")}`;
   const startLocal = new Date(`${ym}-01T00:00:00`);
-  const endLocal = new Date(prevYear, prevMonth, 1); // first of current month local
+  const endLocal = new Date(prevYear, prevMonth, 1);
   const fromIso = startLocal.toISOString();
   const toIso = endLocal.toISOString();
 
   const readings = await fetchReadings(site.id, fromIso, toIso);
-  // bucket by ymd per meter
   const days = new Set<string>();
-  const map = new Map<string, Map<string, number[]>>(); // ymd -> meterId -> values
+  const map = new Map<string, Map<string, number[]>>();
   for (const r of readings) {
     const d = ymdInTz(tz, new Date(r.recorded_at));
     days.add(d);
@@ -240,7 +281,7 @@ async function processSite(site: any) {
       .insert({ site_id: site.id, report_type: "daily", period_key: r.periodKey, recipients });
     if (!dupErr) {
       try {
-        await sendGmail(recipients, r.subject, r.text, r.attachment);
+        await sendEmail(recipients, r.subject, r.text, r.attachment);
         results.push({ type: "daily", period: r.periodKey, ok: true });
       } catch (e: any) {
         await supabaseAdmin.from("report_send_log")
@@ -260,7 +301,7 @@ async function processSite(site: any) {
       .insert({ site_id: site.id, report_type: "monthly", period_key: r.periodKey, recipients });
     if (!dupErr) {
       try {
-        await sendGmail(recipients, r.subject, r.text, r.attachment);
+        await sendEmail(recipients, r.subject, r.text, r.attachment);
         results.push({ type: "monthly", period: r.periodKey, ok: true });
       } catch (e: any) {
         await supabaseAdmin.from("report_send_log")
@@ -280,7 +321,6 @@ export const Route = createFileRoute("/api/public/hooks/send-reports")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        // Allow `?force=siteId` for manual test sends regardless of hour
         const url = new URL(request.url);
         const force = url.searchParams.get("force");
 
