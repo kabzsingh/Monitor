@@ -116,26 +116,58 @@ function AdminPage() {
     load();
   };
 
-  const addMeter = async (siteId: string, m: Partial<Meter>) => {
-    const { error } = await supabase.from("site_meters").insert({
-      site_id: siteId,
-      meter_type: m.meter_type!,
-      name: m.name!,
-      unit: m.unit ?? "",
-      capacity: m.capacity ?? null,
-      low_threshold: m.low_threshold ?? null,
-      device_key: m.device_key!,
-      chemical_group: m.chemical_group ?? null,
-      position: meters.filter((x) => x.site_id === siteId).length,
-    });
-    if (error) return toast.error(error.message);
-    load();
+  const addMeter = async (siteId: string, m: Partial<Meter>): Promise<boolean> => {
+    const name = (m.name ?? "").trim();
+    const deviceKey = (m.device_key ?? "").trim();
+    if (!name || !deviceKey) {
+      toast.error("Name and device_key required");
+      return false;
+    }
+    if (meters.some((x) => x.site_id === siteId && x.device_key === deviceKey)) {
+      toast.error(`This site already has a meter with device_key "${deviceKey}"`);
+      return false;
+    }
+    try {
+      const { error } = await supabase.from("site_meters").insert({
+        site_id: siteId,
+        meter_type: m.meter_type!,
+        name,
+        unit: (m.unit ?? "").trim() || "",
+        capacity: m.capacity ?? null,
+        low_threshold: m.low_threshold ?? null,
+        device_key: deviceKey,
+        chemical_group: m.chemical_group?.trim() || null,
+        position: meters.filter((x) => x.site_id === siteId).length,
+      });
+      if (error) {
+        toast.error(error.message);
+        return false;
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed to add meter";
+      toast.error(msg);
+      return false;
+    }
+    try {
+      await load();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      toast.error(`Meter was saved but the list could not be refreshed (${msg}). Try reloading the page.`);
+      return true;
+    }
+    toast.success("Meter added");
+    return true;
   };
 
   const removeMeter = async (id: string) => {
-    const { error } = await supabase.from("site_meters").delete().eq("id", id);
-    if (error) return toast.error(error.message);
-    load();
+    try {
+      const { error } = await supabase.from("site_meters").delete().eq("id", id);
+      if (error) return toast.error(error.message);
+      await load();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed to remove meter";
+      toast.error(msg);
+    }
   };
 
   const generateKey = useServerFn(createSiteApiKey);
@@ -211,6 +243,7 @@ function AdminPage() {
       </Dialog>
 
       <EspSketchDialog
+        key={sketchSite?.id ?? "esp-sketch-closed"}
         site={sketchSite}
         meters={sketchSite ? meters.filter((m) => m.site_id === sketchSite.id) : []}
         onClose={() => setSketchSite(null)}
@@ -325,7 +358,7 @@ function SiteAdminCard({
 }: {
   site: Site; meters: Meter[]; keys: ApiKeyRow[];
   onRemoveSite: () => void;
-  onAddMeter: (m: Partial<Meter>) => void;
+  onAddMeter: (m: Partial<Meter>) => Promise<boolean>;
   onRemoveMeter: (id: string) => void;
   onGenerateKey: () => void;
   onRevokeKey: (id: string) => void;
@@ -347,7 +380,7 @@ function SiteAdminCard({
           {site.location && <div className="text-xs text-muted-foreground">{site.location}</div>}
         </div>
         <div className="flex items-center gap-1">
-          <Button variant="outline" size="sm" onClick={onGenerateSketch} disabled={meters.length === 0}>
+          <Button type="button" variant="outline" size="sm" onClick={onGenerateSketch} disabled={meters.length === 0}>
             <Cpu className="h-4 w-4" /> ESP32 sketch
           </Button>
           <Button variant="ghost" size="sm" onClick={onRemoveSite}><Trash2 className="h-4 w-4" /></Button>
@@ -396,16 +429,28 @@ function SiteAdminCard({
             <Input placeholder="Chemical group (e.g. Soap, Wax) — pair level + flow with same group" value={group} onChange={(e) => setGroup(e.target.value)} />
           </div>
         )}
-        <Button size="sm" className="mt-2" onClick={() => {
-          if (!name || !deviceKey) return toast.error("Name and device_key required");
-          onAddMeter({
-            meter_type: type, name, unit, device_key: deviceKey,
-            capacity: capacity ? Number(capacity) : null,
-            low_threshold: low ? Number(low) : null,
-            chemical_group: group.trim() || null,
-          });
-          setName(""); setDeviceKey(""); setCapacity(""); setLow(""); setGroup("");
-        }}><Plus className="h-4 w-4" /> Add meter</Button>
+        <Button
+          size="sm"
+          className="mt-2"
+          onClick={async () => {
+            if (!name.trim() || !deviceKey.trim()) return toast.error("Name and device_key required");
+            const ok = await onAddMeter({
+              meter_type: type,
+              name: name.trim(),
+              unit,
+              device_key: deviceKey.trim(),
+              capacity: capacity ? Number(capacity) : null,
+              low_threshold: low ? Number(low) : null,
+              chemical_group: group.trim() || null,
+            });
+            if (!ok) return;
+            setName("");
+            setDeviceKey("");
+            setCapacity("");
+            setLow("");
+            setGroup("");
+          }}
+        ><Plus className="h-4 w-4" /> Add meter</Button>
       </div>
 
       <div className="mt-5">
@@ -525,11 +570,12 @@ function buildEsp32Sketch(site: Site, meters: Meter[]) {
   const varDecls = meters
     .map((m) => `float v_${m.device_key.replace(/[^a-zA-Z0-9]/g, "_")} = 0; // ${m.name}`)
     .join("\n");
+  // Each line appends one JSON object; leading comma separates array entries (valid C++ / JSON).
   const jsonParts = meters
     .map((m, i) => {
       const v = `v_${m.device_key.replace(/[^a-zA-Z0-9]/g, "_")}`;
-      const sep = i < meters.length - 1 ? "," : "";
-      return `  payload += "{\\"device_key\\":\\"${m.device_key}\\",\\"value\\":" + String(${v}, 3) + "}${sep}";`;
+      const lead = i === 0 ? "" : ",";
+      return `  payload += "${lead}{\\"device_key\\":\\"${m.device_key}\\",\\"value\\":" + String(${v}, 3) + "}";`;
     })
     .join("\n");
 
@@ -600,14 +646,16 @@ function EspSketchDialog({ site, meters, onClose }: { site: Site | null; meters:
   const code = site ? buildEsp32Sketch(site, meters) : "";
   return (
     <Dialog open={!!site} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-3xl">
-        <DialogHeader><DialogTitle>ESP32 sketch — {site?.name}</DialogTitle></DialogHeader>
-        <p className="text-sm text-muted-foreground">
-          Paste this into the Arduino IDE. Replace the Wi-Fi creds and the <code>SITE_API_KEY</code> with the one generated above. Wire your pulse-counter / tank-level reads into the <code>TODO</code> spots.
+      <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col gap-4 overflow-hidden">
+        <DialogHeader className="shrink-0">
+          <DialogTitle>ESP32 sketch — {site?.name}</DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground shrink-0">
+          Paste this into the Arduino IDE. Replace the Wi-Fi creds and the <code className="text-foreground">SITE_API_KEY</code> with the one generated above. Wire your pulse-counter / tank-level reads into the <code className="text-foreground">TODO</code> spots.
         </p>
-        <Textarea readOnly value={code} className="font-mono text-xs h-[420px]" />
-        <DialogFooter>
-          <Button onClick={() => { navigator.clipboard.writeText(code); toast.success("Sketch copied"); }}>
+        <Textarea readOnly value={code} className="font-mono text-xs min-h-[280px] flex-1 resize-y" spellCheck={false} />
+        <DialogFooter className="shrink-0">
+          <Button type="button" onClick={() => { navigator.clipboard.writeText(code); toast.success("Sketch copied"); }}>
             <Copy className="h-4 w-4" /> Copy sketch
           </Button>
         </DialogFooter>
