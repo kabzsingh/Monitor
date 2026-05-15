@@ -1,7 +1,7 @@
 import { createMiddleware } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 import { createClient } from '@supabase/supabase-js'
-import { getCookie } from 'vinxi/http'
+import { getCookie, getEvent } from 'vinxi/http'
 import type { Database } from './types'
 
 export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server(
@@ -24,7 +24,8 @@ export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server
 
     // 2. Fallback to Cookie (for SSR/Direct Page Loads)
     if (!token) {
-      token = getCookie('sb-access-token') || '';
+      const event = getEvent()
+      token = getCookie(event, 'sb-access-token') || '';
     }
 
     if (!token) {
