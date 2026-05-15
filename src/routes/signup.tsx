@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { AuthShell } from "./login";
+import { signIn } from "@/lib/auth";
 
 export const Route = createFileRoute("/signup")({ component: SignupPage });
 
@@ -26,14 +27,32 @@ function SignupPage() {
         data: { display_name: name },
       },
     });
-    setBusy(false);
-    if (error) { toast.error(error.message); return; }
+
+    if (error) {
+      toast.error(error.message);
+      setBusy(false);
+      return;
+    }
+
     if (data.session) {
-      toast.success("Account created");
-      nav({ to: "/dashboard" });
+      try {
+        await signIn({
+          data: {
+            accessToken: data.session.access_token,
+            refreshToken: data.session.refresh_token,
+          }
+        });
+        toast.success("Account created");
+        nav({ to: "/dashboard" });
+      } catch (err) {
+        console.error("Failed to sync session to server:", err);
+        toast.error("Signup successful, but session sync failed. Please log in.");
+        nav({ to: "/login" });
+      }
     } else {
       toast.success("Check your email to confirm your account");
     }
+    setBusy(false);
   };
 
   return (

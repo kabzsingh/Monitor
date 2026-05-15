@@ -4,6 +4,7 @@ import { useAuth } from "@/lib/auth-context";
 import { Button } from "@/components/ui/button";
 import { Activity, LayoutDashboard, Settings, LogOut, FileDown } from "lucide-react";
 import { getSupabaseDashboardTablesUrl, getSupabaseProjectRef } from "@/lib/supabase-project";
+import { signOut as serverSignOut } from "@/lib/auth";
 
 export const Route = createFileRoute("/_authenticated")({ component: AuthLayout });
 
@@ -17,6 +18,18 @@ function AuthLayout() {
   useEffect(() => {
     if (!loading && !session) nav({ to: "/login" });
   }, [loading, session, nav]);
+
+  const handleSignOut = async () => {
+    try {
+      await signOut(); // Client-side sign out
+      await serverSignOut(); // Clear server-side cookies
+      nav({ to: "/" });
+    } catch (error) {
+      console.error("Sign out failed:", error);
+      // Fallback: still navigate to home if possible
+      nav({ to: "/" });
+    }
+  };
 
   if (loading || !session) {
     return <div className="min-h-screen grid place-items-center text-muted-foreground">Loading…</div>;
@@ -51,7 +64,7 @@ function AuthLayout() {
           </nav>
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground hidden md:inline">{user?.email}</span>
-            <Button variant="ghost" size="sm" onClick={() => { signOut(); nav({ to: "/" }); }}>
+            <Button variant="ghost" size="sm" onClick={handleSignOut}>
               <LogOut className="h-4 w-4" />
             </Button>
           </div>

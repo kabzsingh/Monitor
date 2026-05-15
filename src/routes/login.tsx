@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Activity } from "lucide-react";
 import { toast } from "sonner";
+import { signIn } from "@/lib/auth";
 
 export const Route = createFileRoute("/login")({ component: LoginPage });
 
@@ -18,10 +19,30 @@ function LoginPage() {
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+
+    if (error) {
+      toast.error(error.message);
+      setBusy(false);
+      return;
+    }
+
+    if (data.session) {
+      try {
+        await signIn({
+          data: {
+            accessToken: data.session.access_token,
+            refreshToken: data.session.refresh_token,
+          }
+        });
+        nav({ to: "/dashboard" });
+      } catch (err) {
+        console.error("Failed to sync session to server:", err);
+        toast.error("Authentication failed. Please try again.");
+      }
+    }
+
     setBusy(false);
-    if (error) { toast.error(error.message); return; }
-    nav({ to: "/dashboard" });
   };
 
   return (
