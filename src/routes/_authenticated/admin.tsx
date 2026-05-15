@@ -1,8 +1,11 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-context";
+import { bootstrapAdminAccess, isSetupRequiredError } from "@/lib/bootstrap-admin";
+import { clearSupabaseSession } from "@/lib/clear-supabase-session";
+import { getSupabaseProjectRef } from "@/lib/supabase-project";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,10 +30,13 @@ interface Site {
 interface Meter { id: string; site_id: string; meter_type: "wash"|"fresh_water"|"chemical"|"chemical_flow"; name: string; unit: string; capacity: number | null; low_threshold: number | null; device_key: string; position: number; chemical_group: string | null }
 interface ApiKeyRow { id: string; site_id: string; key_prefix: string; label: string | null; revoked: boolean; last_used_at: string | null; created_at: string }
 
+const SETUP_SQL_HINT =
+  "Supabase Dashboard → SQL Editor → run scripts/setup-admin.sql from this repo (or paste the setup SQL from the repo README).";
+
 function AdminPage() {
   const { isAdmin, refreshRoles, user, loading } = useAuth();
   const nav = useNavigate();
-  const bootstrap = useServerFn(grantAdminBootstrap);
+  const bootstrapServer = useServerFn(grantAdminBootstrap);
   const seed = useServerFn(seedDemoData);
 
   const [sites, setSites] = useState<Site[]>([]);
@@ -41,6 +47,9 @@ function AdminPage() {
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const [sketchSite, setSketchSite] = useState<Site | null>(null);
   const [isBootstrapping, setIsBootstrapping] = useState(false);
+  const [needsDbSetup, setNeedsDbSetup] = useState(false);
+  const [bootstrapNote, setBootstrapNote] = useState<string | null>(null);
+  const projectRef = getSupabaseProjectRef();
 
   const load = async () => {
     if (!isAdmin) return;
@@ -54,19 +63,52 @@ function AdminPage() {
     setKeys((k as any) ?? []);
   };
 
-  useEffect(() => {
-    // bootstrap: first user becomes admin if no admins exist yet
+  const runBootstrap = useCallback(async () => {
+    if (!user?.id) return;
     setIsBootstrapping(true);
-    bootstrap().then(async (res) => {
+    setNeedsDbSetup(false);
+    setBootstrapNote(null);
+    try {
+      let res = await bootstrapServer();
+      if (!res.granted && !res.isAdmin) {
+        res = await bootstrapAdminAccess(user.id);
+      }
       if (res.granted || res.isAdmin) {
         await refreshRoles();
         if (res.granted) toast.success("You're set as admin (first user)");
+      } else {
+        setBootstrapNote(
+          "No admin role yet. If you changed Supabase projects, sign out and create a new account on this database, then retry.",
+        );
+        const { error: rpcProbe } = await supabase.rpc("bootstrap_first_admin");
+        if (
+          rpcProbe?.code === "PGRST202" ||
+          (rpcProbe?.message?.includes("bootstrap_first_admin") ?? false)
+        ) {
+          setNeedsDbSetup(true);
+        }
       }
+    } catch (e) {
+      console.error(e);
+      if (isSetupRequiredError(e) || (e && typeof e === "object" && (e as { code?: string }).code === "42501")) {
+        setNeedsDbSetup(true);
+      }
+      toast.error(
+        isSetupRequiredError(e)
+          ? "Database setup required — see instructions below."
+          : e instanceof Error
+            ? e.message
+            : "Could not verify admin access. Try signing out and back in.",
+      );
+    } finally {
       setIsBootstrapping(false);
-    }).catch(() => {
-      setIsBootstrapping(false);
-    });
-  }, []); // eslint-disable-line
+    }
+  }, [user?.id, refreshRoles, bootstrapServer]);
+
+  useEffect(() => {
+    if (loading || !user?.id) return;
+    void runBootstrap();
+  }, [loading, user?.id, runBootstrap]);
 
   useEffect(() => {
     if (isAdmin) {
@@ -91,10 +133,31 @@ function AdminPage() {
         </div>
         <h2 className="font-semibold text-xl">Admins only</h2>
         <p className="text-sm text-muted-foreground mt-2">
-          {user?.email} doesn't have admin access. If you're the first user, the system should have auto-granted access.
+          {user?.email} doesn&apos;t have admin access on{" "}
+          <code className="text-xs">{projectRef ?? "this database"}</code> yet.
         </p>
+        {bootstrapNote && (
+          <p className="text-xs text-muted-foreground mt-2 text-left">{bootstrapNote}</p>
+        )}
+        {needsDbSetup && (
+          <p className="text-xs text-amber-600 dark:text-amber-400 mt-3 text-left rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
+            {SETUP_SQL_HINT}
+          </p>
+        )}
         <div className="flex flex-col gap-2 mt-6">
-          <Button onClick={() => window.location.reload()}>Retry Access</Button>
+          <Button onClick={() => void runBootstrap()} disabled={isBootstrapping}>
+            {isBootstrapping ? "Checking…" : "Retry access"}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={async () => {
+              await clearSupabaseSession();
+              toast.message("Signed out — create an account on this database");
+              nav({ to: "/signup" });
+            }}
+          >
+            Sign out &amp; sign up again
+          </Button>
           <Button variant="ghost" onClick={() => nav({ to: "/dashboard" })}>Back to dashboard</Button>
         </div>
       </div>

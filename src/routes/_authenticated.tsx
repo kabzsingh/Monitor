@@ -3,13 +3,16 @@ import { useEffect } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { Button } from "@/components/ui/button";
 import { Activity, LayoutDashboard, Settings, LogOut, FileDown } from "lucide-react";
+import { getSupabaseDashboardTablesUrl, getSupabaseProjectRef } from "@/lib/supabase-project";
 
 export const Route = createFileRoute("/_authenticated")({ component: AuthLayout });
 
 function AuthLayout() {
-  const { session, loading, isAdmin, signOut, user } = useAuth();
+  const { session, loading, signOut, user } = useAuth();
   const nav = useNavigate();
   const path = useRouterState({ select: (s) => s.location.pathname });
+  const supabaseRef = getSupabaseProjectRef();
+  const supabaseTablesUrl = getSupabaseDashboardTablesUrl();
 
   useEffect(() => {
     if (!loading && !session) nav({ to: "/login" });
@@ -40,13 +43,11 @@ function AuthLayout() {
                 <FileDown className="h-4 w-4" /> <span className="hidden sm:inline ml-1">Reports</span>
               </Button>
             </Link>
-            {isAdmin && (
-              <Link to="/admin">
-                <Button variant={path.startsWith("/admin") ? "secondary" : "ghost"} size="sm">
-                  <Settings className="h-4 w-4" /> <span className="hidden sm:inline ml-1">Admin</span>
-                </Button>
-              </Link>
-            )}
+            <Link to="/admin">
+              <Button variant={path.startsWith("/admin") ? "secondary" : "ghost"} size="sm">
+                <Settings className="h-4 w-4" /> <span className="hidden sm:inline ml-1">Admin</span>
+              </Button>
+            </Link>
           </nav>
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground hidden md:inline">{user?.email}</span>
@@ -59,6 +60,20 @@ function AuthLayout() {
       <main className="flex-1 container mx-auto px-4 md:px-6 py-6 md:py-8">
         <Outlet />
       </main>
+      {supabaseRef && (
+        <footer className="border-t border-border py-2 text-center text-[11px] text-muted-foreground">
+          Database:{" "}
+          {supabaseTablesUrl ? (
+            <a href={supabaseTablesUrl} target="_blank" rel="noreferrer" className="underline hover:text-foreground">
+              {supabaseRef}
+            </a>
+          ) : (
+            supabaseRef
+          )}
+          <span className="mx-1">·</span>
+          Empty tables here mean no data yet, not a wrong project (if the ID matches your dashboard URL).
+        </footer>
+      )}
     </div>
   );
 }

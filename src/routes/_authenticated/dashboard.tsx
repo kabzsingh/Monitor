@@ -112,9 +112,7 @@ function DashboardPage() {
           <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">Live sites</h1>
           <p className="text-sm text-muted-foreground">Real-time view across all your wash sites.</p>
         </div>
-        {isAdmin && (
-          <Link to="/admin"><Button variant="outline" size="sm"><Plus className="h-4 w-4" /> Manage sites</Button></Link>
-        )}
+        <Link to="/admin"><Button variant="outline" size="sm"><Plus className="h-4 w-4" /> Manage sites</Button></Link>
       </div>
 
       {sites === null ? (

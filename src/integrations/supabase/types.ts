@@ -298,6 +298,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      bootstrap_first_admin: {
+        Args: Record<PropertyKey, never>
+        Returns: { granted: boolean; is_admin: boolean }
+      }
       can_access_site: {
         Args: { _site_id: string; _user_id: string }
         Returns: boolean
