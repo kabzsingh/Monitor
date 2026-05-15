@@ -4,18 +4,27 @@ import { createClient } from '@supabase/supabase-js'
 import { getCookie, getEvent } from 'vinxi/http'
 import type { Database } from './types'
 
+/**
+ * Robust environment variable resolver for Cloudflare Workers, Node.js, and Vite.
+ */
 function getEnv(key: string): string | undefined {
-  const event = getEvent()
-  const cloudflareEnv = (event?.context as any)?.cloudflare?.env || {}
-  const processEnv = (globalThis as any).process?.env || {}
+  try {
+    const event = getEvent()
+    const cloudflareEnv = (event?.context as any)?.cloudflare?.env || {}
+    const processEnv = (globalThis as any).process?.env || {}
 
-  // Try direct key, then VITE_ prefixed key, across both Cloudflare and process.env
-  return (
-    cloudflareEnv[key] ||
-    cloudflareEnv[`VITE_${key}`] ||
-    processEnv[key] ||
-    processEnv[`VITE_${key}`]
-  )
+    // Try direct key, then VITE_ prefixed key, across both Cloudflare and process.env
+    return (
+      cloudflareEnv[key] ||
+      cloudflareEnv[`VITE_${key}`] ||
+      processEnv[key] ||
+      processEnv[`VITE_${key}`]
+    )
+  } catch (e) {
+    // Fallback for build time or non-request contexts
+    const processEnv = (globalThis as any).process?.env || {}
+    return processEnv[key] || processEnv[`VITE_${key}`]
+  }
 }
 
 export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server(
@@ -42,7 +51,6 @@ export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server
     if (!token) {
       try {
         const event = getEvent()
-        // Check for common Supabase cookie names
         token = getCookie(event, 'sb-access-token') || getCookie(event, 'supabase-auth-token') || ''
       } catch (e) {
         // Not available in this context
