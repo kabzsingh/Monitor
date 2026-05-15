@@ -19,57 +19,64 @@ function getEnv(key: string): string | undefined {
 
 export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server(
   async ({ next }) => {
-    const SUPABASE_URL = getEnv('SUPABASE_URL');
-    const SUPABASE_PUBLISHABLE_KEY = getEnv('SUPABASE_PUBLISHABLE_KEY') || getEnv('SUPABASE_ANON_KEY');
+    const SUPABASE_URL = getEnv('SUPABASE_URL')
+    const SUPABASE_PUBLISHABLE_KEY = getEnv('SUPABASE_PUBLISHABLE_KEY') || getEnv('SUPABASE_ANON_KEY')
 
     if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
-      const msg = `Missing Supabase config. Found URL: ${!!SUPABASE_URL}, Key: ${!!SUPABASE_PUBLISHABLE_KEY}`;
-      console.error(`[Supabase Auth] ${msg}`);
-      throw new Response(msg, { status: 500 });
+      const msg = `Missing Supabase configuration. URL: ${!!SUPABASE_URL}, Key: ${!!SUPABASE_PUBLISHABLE_KEY}`
+      console.error(`[Supabase Auth] ${msg}`)
+      throw new Response(msg, { status: 500 })
     }
-    
-    const request = getRequest();
-    let token = '';
+
+    const request = getRequest()
+    let token = ''
 
     // 1. Try Authorization Header
-    const authHeader = request.headers.get('authorization');
+    const authHeader = request.headers.get('authorization')
     if (authHeader?.startsWith('Bearer ')) {
-      token = authHeader.replace('Bearer ', '');
+      token = authHeader.replace('Bearer ', '')
     }
 
-    // 2. Fallback to Cookie (for SSR/Direct Page Loads)
+    // 2. Fallback to Cookies (for SSR / direct page loads)
     if (!token) {
       try {
         const event = getEvent()
-        token = getCookie(event, 'sb-access-token') || '';
+        // Check for common Supabase cookie names
+        token = getCookie(event, 'sb-access-token') || getCookie(event, 'supabase-auth-token') || ''
       } catch (e) {
-        // Not available
+        // Not available in this context
       }
     }
 
     if (!token) {
-      throw new Response('Unauthorized: No token provided', { status: 401 });
+      throw new Response('Unauthorized: No active session found', { status: 401 })
     }
 
-    const supabase = createClient<Database>(
-      SUPABASE_URL,
-      SUPABASE_PUBLISHABLE_KEY,
-      {
-        global: { headers: { Authorization: `Bearer ${token}` } },
-        auth: { persistSession: false },
-      }
-    );
+    const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+      global: {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      },
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    })
 
-    const { data: userData, error } = await supabase.auth.getUser(token);
-    if (error || !userData.user) {
-      throw new Response('Unauthorized: Invalid token', { status: 401 });
+    // Verify the token and get user data
+    const { data: { user }, error } = await supabase.auth.getUser(token)
+
+    if (error || !user) {
+      console.warn('[Supabase Auth] Token verification failed:', error?.message)
+      throw new Response('Unauthorized: Invalid or expired session', { status: 401 })
     }
 
     return next({
       context: {
         supabase,
-        userId: userData.user.id,
-        user: userData.user,
+        user,
+        userId: user.id,
       },
     })
   }
