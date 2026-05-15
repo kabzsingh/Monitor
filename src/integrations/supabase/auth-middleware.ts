@@ -7,13 +7,14 @@ import type { Database } from './types'
 function getEnv(key: string): string | undefined {
   const event = getEvent()
   const cloudflareEnv = (event?.context as any)?.cloudflare?.env || {}
+  const processEnv = (globalThis as any).process?.env || {}
 
   // Try direct key, then VITE_ prefixed key, across both Cloudflare and process.env
   return (
     cloudflareEnv[key] ||
     cloudflareEnv[`VITE_${key}`] ||
-    process.env[key] ||
-    process.env[`VITE_${key}`]
+    processEnv[key] ||
+    processEnv[`VITE_${key}`]
   )
 }
 
