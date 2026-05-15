@@ -4,13 +4,28 @@ import { createClient } from '@supabase/supabase-js'
 import { getCookie, getEvent } from 'vinxi/http'
 import type { Database } from './types'
 
+function getEnv(key: string): string | undefined {
+  const event = getEvent()
+  const cloudflareEnv = (event?.context as any)?.cloudflare?.env || {}
+
+  // Try direct key, then VITE_ prefixed key, across both Cloudflare and process.env
+  return (
+    cloudflareEnv[key] ||
+    cloudflareEnv[`VITE_${key}`] ||
+    process.env[key] ||
+    process.env[`VITE_${key}`]
+  )
+}
+
 export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server(
   async ({ next }) => {
-    const SUPABASE_URL = process.env.SUPABASE_URL;
-    const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY;
+    const SUPABASE_URL = getEnv('SUPABASE_URL');
+    const SUPABASE_PUBLISHABLE_KEY = getEnv('SUPABASE_PUBLISHABLE_KEY') || getEnv('SUPABASE_ANON_KEY');
 
     if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
-      throw new Response('Missing Supabase configuration', { status: 500 });
+      const msg = `Missing Supabase config. Found URL: ${!!SUPABASE_URL}, Key: ${!!SUPABASE_PUBLISHABLE_KEY}`;
+      console.error(`[Supabase Auth] ${msg}`);
+      throw new Response(msg, { status: 500 });
     }
     
     const request = getRequest();
@@ -24,8 +39,12 @@ export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server
 
     // 2. Fallback to Cookie (for SSR/Direct Page Loads)
     if (!token) {
-      const event = getEvent()
-      token = getCookie(event, 'sb-access-token') || '';
+      try {
+        const event = getEvent()
+        token = getCookie(event, 'sb-access-token') || '';
+      } catch (e) {
+        // Not available
+      }
     }
 
     if (!token) {

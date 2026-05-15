@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { createSiteApiKey, grantAdminBootstrap, seedDemoData, getSmtpSettings, updateSmtpSettings } from "@/lib/admin.functions";
-import { Copy, Plus, Trash2, KeyRound, Sparkles, Cpu, Mail, Send, Server, ShieldCheck, Loader2 } from "lucide-react";
+import { Copy, Plus, Trash2, KeyRound, Sparkles, Cpu, Mail, Send, Server, ShieldCheck, Loader2, AlertTriangle } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 
@@ -31,7 +31,7 @@ interface Meter { id: string; site_id: string; meter_type: "wash"|"fresh_water"|
 interface ApiKeyRow { id: string; site_id: string; key_prefix: string; label: string | null; revoked: boolean; last_used_at: string | null; created_at: string }
 
 const SETUP_SQL_HINT =
-  "Supabase Dashboard → SQL Editor → run scripts/setup-admin.sql from this repo (or paste the setup SQL from the repo README).";
+  "Supabase Dashboard → SQL Editor → run scripts/setup-admin.sql from this repo.";
 
 function AdminPage() {
   const { isAdmin, refreshRoles, user, loading } = useAuth();
@@ -53,14 +53,23 @@ function AdminPage() {
 
   const load = async () => {
     if (!isAdmin) return;
-    const [{ data: s }, { data: m }, { data: k }] = await Promise.all([
-      supabase.from("sites").select("id,name,location,timezone,report_hour,report_recipients,daily_report_enabled,monthly_report_enabled").order("created_at"),
-      supabase.from("site_meters").select("*").order("position"),
-      supabase.from("site_api_keys").select("*").order("created_at"),
-    ]);
-    setSites((s as any) ?? []);
-    setMeters((m as any) ?? []);
-    setKeys((k as any) ?? []);
+    try {
+      // Load data individually to handle missing columns gracefully
+      const { data: s, error: sErr } = await supabase.from("sites").select("*").order("created_at");
+      if (sErr) toast.error("Error loading sites: " + sErr.message);
+      else setSites((s as any) ?? []);
+
+      const { data: m, error: mErr } = await supabase.from("site_meters").select("*").order("position");
+      if (mErr) toast.error("Error loading meters: " + mErr.message);
+      else setMeters((m as any) ?? []);
+
+      const { data: k, error: kErr } = await supabase.from("site_api_keys").select("*").order("created_at");
+      if (kErr) toast.error("Error loading API keys: " + kErr.message);
+      else setKeys((k as any) ?? []);
+    } catch (e) {
+      console.error("Load failed", e);
+      toast.error("Failed to load admin data");
+    }
   };
 
   const runBootstrap = useCallback(async () => {
@@ -69,37 +78,25 @@ function AdminPage() {
     setNeedsDbSetup(false);
     setBootstrapNote(null);
     try {
-      let res = await bootstrapServer();
-      if (!res.granted && !res.isAdmin) {
-        res = await bootstrapAdminAccess(user.id);
-      }
+      const res = await bootstrapServer();
       if (res.granted || res.isAdmin) {
         await refreshRoles();
-        if (res.granted) toast.success("You're set as admin (first user)");
+        if (res.granted) toast.success("You've been granted Admin access!");
       } else {
-        setBootstrapNote(
-          "No admin role yet. If you changed Supabase projects, sign out and create a new account on this database, then retry.",
-        );
-        const { error: rpcProbe } = await supabase.rpc("bootstrap_first_admin");
-        if (
-          rpcProbe?.code === "PGRST202" ||
-          (rpcProbe?.message?.includes("bootstrap_first_admin") ?? false)
-        ) {
+        // Fallback to client-side bootstrap if server fails
+        const clientRes = await bootstrapAdminAccess(user.id);
+        if (clientRes.granted || clientRes.isAdmin) {
+          await refreshRoles();
+          if (clientRes.granted) toast.success("You're set as admin (via fallback)");
+        } else {
+          setBootstrapNote("No admin role detected. Please ensure you have run the setup SQL in your Supabase dashboard.");
           setNeedsDbSetup(true);
         }
       }
-    } catch (e) {
-      console.error(e);
-      if (isSetupRequiredError(e) || (e && typeof e === "object" && (e as { code?: string }).code === "42501")) {
-        setNeedsDbSetup(true);
-      }
-      toast.error(
-        isSetupRequiredError(e)
-          ? "Database setup required — see instructions below."
-          : e instanceof Error
-            ? e.message
-            : "Could not verify admin access. Try signing out and back in.",
-      );
+    } catch (e: any) {
+      console.error("Bootstrap error:", e);
+      setNeedsDbSetup(true);
+      toast.error(e?.message || "Failed to verify admin access");
     } finally {
       setIsBootstrapping(false);
     }
@@ -107,58 +104,74 @@ function AdminPage() {
 
   useEffect(() => {
     if (loading || !user?.id) return;
-    void runBootstrap();
-  }, [loading, user?.id, runBootstrap]);
+    if (!isAdmin) void runBootstrap();
+  }, [loading, user?.id, isAdmin, runBootstrap]);
 
   useEffect(() => {
-    if (isAdmin) {
-      load();
-    }
+    if (isAdmin) load();
   }, [isAdmin]);
 
   if (loading || isBootstrapping) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4">
+      <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4 text-center px-4">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        <p className="text-sm text-muted-foreground">Verifying admin access...</p>
+        <p className="text-sm text-muted-foreground font-medium">Verifying admin permissions...</p>
+        <p className="text-xs text-muted-foreground/60 max-w-xs italic">
+          This usually takes a few seconds. If it hangs, please check your internet connection.
+        </p>
       </div>
     );
   }
 
   if (!isAdmin) {
     return (
-      <div className="max-w-md mx-auto rounded-xl border border-border bg-card p-6 text-center">
-        <div className="flex justify-center mb-4">
-          <ShieldCheck className="h-12 w-12 text-muted-foreground opacity-20" />
+      <div className="max-w-md mx-auto mt-12 rounded-xl border border-border bg-card p-8 shadow-xl text-center">
+        <div className="flex justify-center mb-6">
+          <div className="p-3 bg-muted rounded-full">
+            <ShieldCheck className="h-10 w-10 text-muted-foreground opacity-50" />
+          </div>
         </div>
-        <h2 className="font-semibold text-xl">Admins only</h2>
-        <p className="text-sm text-muted-foreground mt-2">
-          {user?.email} doesn&apos;t have admin access on{" "}
-          <code className="text-xs">{projectRef ?? "this database"}</code> yet.
+        <h2 className="font-semibold text-2xl tracking-tight">Access Restricted</h2>
+        <p className="text-sm text-muted-foreground mt-3 leading-relaxed">
+          Your account (<strong>{user?.email}</strong>) does not have administrator privileges on project
+          <code className="mx-1 px-1.5 py-0.5 rounded bg-muted text-xs font-mono">{projectRef || "unknown"}</code>.
         </p>
-        {bootstrapNote && (
-          <p className="text-xs text-muted-foreground mt-2 text-left">{bootstrapNote}</p>
-        )}
+
         {needsDbSetup && (
-          <p className="text-xs text-amber-600 dark:text-amber-400 mt-3 text-left rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
-            {SETUP_SQL_HINT}
-          </p>
+          <div className="mt-6 p-4 text-left rounded-lg border border-amber-500/20 bg-amber-500/5">
+            <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 font-semibold text-sm mb-2">
+              <AlertTriangle className="h-4 w-4" />
+              <span>Database Setup Required</span>
+            </div>
+            <p className="text-xs text-amber-700/80 dark:text-amber-300/80 leading-relaxed mb-3">
+              {SETUP_SQL_HINT}
+            </p>
+            <div className="text-[10px] font-mono bg-background/50 p-2 rounded border border-amber-500/10 overflow-x-auto whitespace-pre">
+              {`-- Find this script in:
+scripts/setup-admin.sql`}
+            </div>
+          </div>
         )}
-        <div className="flex flex-col gap-2 mt-6">
-          <Button onClick={() => void runBootstrap()} disabled={isBootstrapping}>
-            {isBootstrapping ? "Checking…" : "Retry access"}
+
+        <div className="flex flex-col gap-3 mt-8">
+          <Button onClick={() => void runBootstrap()} disabled={isBootstrapping} className="w-full">
+            {isBootstrapping ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            Retry Access Check
           </Button>
           <Button
             variant="outline"
+            className="w-full"
             onClick={async () => {
               await clearSupabaseSession();
-              toast.message("Signed out — create an account on this database");
+              toast.info("Signed out. Please sign up for a new account.");
               nav({ to: "/signup" });
             }}
           >
-            Sign out &amp; sign up again
+            Sign out & Switch User
           </Button>
-          <Button variant="ghost" onClick={() => nav({ to: "/dashboard" })}>Back to dashboard</Button>
+          <Button variant="ghost" onClick={() => nav({ to: "/dashboard" })} className="text-muted-foreground">
+            Return to Dashboard
+          </Button>
         </div>
       </div>
     );
@@ -169,25 +182,22 @@ function AdminPage() {
     const { error } = await supabase.from("sites").insert({ name: newSiteName.trim(), location: newSiteLoc.trim() || null });
     if (error) return toast.error(error.message);
     setNewSiteName(""); setNewSiteLoc(""); load();
-    toast.success("Site created");
+    toast.success("Site created successfully");
   };
 
   const removeSite = async (id: string) => {
-    if (!confirm("Delete this site? All meters and readings will be removed.")) return;
+    if (!confirm("Are you sure? This will permanently delete the site and all its data.")) return;
     const { error } = await supabase.from("sites").delete().eq("id", id);
     if (error) return toast.error(error.message);
     load();
+    toast.success("Site deleted");
   };
 
   const addMeter = async (siteId: string, m: Partial<Meter>): Promise<boolean> => {
     const name = (m.name ?? "").trim();
     const deviceKey = (m.device_key ?? "").trim();
     if (!name || !deviceKey) {
-      toast.error("Name and device_key required");
-      return false;
-    }
-    if (meters.some((x) => x.site_id === siteId && x.device_key === deviceKey)) {
-      toast.error(`This site already has a meter with device_key "${deviceKey}"`);
+      toast.error("Name and Device Key are required");
       return false;
     }
     try {
@@ -206,31 +216,20 @@ function AdminPage() {
         toast.error(error.message);
         return false;
       }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Failed to add meter";
-      toast.error(msg);
+      load();
+      toast.success("Meter added");
+      return true;
+    } catch (e: any) {
+      toast.error(e.message || "Failed to add meter");
       return false;
     }
-    try {
-      await load();
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Unknown error";
-      toast.error(`Meter was saved but the list could not be refreshed (${msg}). Try reloading the page.`);
-      return true;
-    }
-    toast.success("Meter added");
-    return true;
   };
 
   const removeMeter = async (id: string) => {
-    try {
-      const { error } = await supabase.from("site_meters").delete().eq("id", id);
-      if (error) return toast.error(error.message);
-      await load();
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Failed to remove meter";
-      toast.error(msg);
-    }
+    const { error } = await supabase.from("site_meters").delete().eq("id", id);
+    if (error) return toast.error(error.message);
+    load();
+    toast.success("Meter removed");
   };
 
   const generateKey = useServerFn(createSiteApiKey);
@@ -239,69 +238,116 @@ function AdminPage() {
       const res = await generateKey({ siteId, label: "ESP32" });
       setRevealedKey(res.apiKey);
       load();
-    } catch (e: any) { toast.error(e.message ?? "Failed"); }
+    } catch (e: any) { toast.error(e.message ?? "Key generation failed"); }
   };
 
   const revokeKey = async (id: string) => {
     const { error } = await supabase.from("site_api_keys").update({ revoked: true }).eq("id", id);
     if (error) return toast.error(error.message);
     load();
+    toast.success("Key revoked");
   };
 
   return (
-    <div className="space-y-6 pb-12">
-      <div className="flex items-end justify-between flex-wrap gap-3">
+    <div className="max-w-6xl mx-auto space-y-8 pb-20 px-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border pb-6">
         <div>
-          <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">Admin</h1>
-          <p className="text-sm text-muted-foreground">Manage sites, meters, and ESP32 API keys.</p>
+          <h1 className="text-3xl font-bold tracking-tight">Admin Console</h1>
+          <p className="text-muted-foreground mt-1 text-sm">Configure site infrastructure, monitor ESP32 connectivity, and manage reports.</p>
         </div>
-        <Button variant="outline" size="sm" onClick={async () => {
-          const r = await seed(); if (r.seeded) { toast.success("Demo sites seeded"); load(); } else toast.info("Sites already exist — skipped seed");
-        }}><Sparkles className="h-4 w-4" /> Seed demo data</Button>
+        <Button variant="secondary" size="sm" onClick={async () => {
+          const r = await seed();
+          if (r.seeded) {
+            toast.success("Demo environment initialized");
+            load();
+          } else {
+            toast.info("Database already contains data — seeding skipped");
+          }
+        }} className="gap-2 shrink-0">
+          <Sparkles className="h-4 w-4" /> Initialize Demo Sites
+        </Button>
       </div>
 
       <SmtpSettingsPanel />
 
-      <div className="rounded-xl border border-border bg-card p-5 shadow-card">
-        <h2 className="font-semibold mb-3">New site</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="space-y-1.5">
-            <Label>Name</Label>
-            <Input value={newSiteName} onChange={(e) => setNewSiteName(e.target.value)} placeholder="North Bay Wash" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Location</Label>
-            <Input value={newSiteLoc} onChange={(e) => setNewSiteLoc(e.target.value)} placeholder="Manchester, UK" />
-          </div>
-          <div className="flex items-end">
-            <Button onClick={addSite} className="w-full"><Plus className="h-4 w-4" /> Add site</Button>
+      <section className="space-y-4">
+        <h2 className="text-xl font-semibold flex items-center gap-2">
+          <div className="h-2 w-2 rounded-full bg-primary" />
+          Infrastructure Management
+        </h2>
+
+        <div className="rounded-xl border border-border bg-card p-6 shadow-sm overflow-hidden">
+          <h3 className="text-sm font-medium mb-4 text-muted-foreground">Register New Wash Site</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-5 gap-4">
+            <div className="sm:col-span-2 space-y-2">
+              <Label htmlFor="site-name">Friendly Name</Label>
+              <Input id="site-name" value={newSiteName} onChange={(e) => setNewSiteName(e.target.value)} placeholder="e.g. Manchester Central" />
+            </div>
+            <div className="sm:col-span-2 space-y-2">
+              <Label htmlFor="site-loc">Location / Area</Label>
+              <Input id="site-loc" value={newSiteLoc} onChange={(e) => setNewSiteLoc(e.target.value)} placeholder="e.g. M1 1AA" />
+            </div>
+            <div className="flex items-end">
+              <Button onClick={addSite} className="w-full gap-2 shadow-sm">
+                <Plus className="h-4 w-4" /> Create Site
+              </Button>
+            </div>
           </div>
         </div>
-      </div>
 
-      {sites.map((site) => (
-        <SiteAdminCard
-          key={site.id}
-          site={site}
-          meters={meters.filter((m) => m.site_id === site.id)}
-          keys={keys.filter((k) => k.site_id === site.id)}
-          onRemoveSite={() => removeSite(site.id)}
-          onAddMeter={(m) => addMeter(site.id, m)}
-          onRemoveMeter={removeMeter}
-          onGenerateKey={() => handleGenKey(site.id)}
-          onRevokeKey={revokeKey}
-        onGenerateSketch={() => setSketchSite(site)}
-        />
-      ))}
+        <div className="grid gap-6">
+          {sites.map((site) => (
+            <SiteAdminCard
+              key={site.id}
+              site={site}
+              meters={meters.filter((m) => m.site_id === site.id)}
+              keys={keys.filter((k) => k.site_id === site.id)}
+              onRemoveSite={() => removeSite(site.id)}
+              onAddMeter={(m) => addMeter(site.id, m)}
+              onRemoveMeter={removeMeter}
+              onGenerateKey={() => handleGenKey(site.id)}
+              onRevokeKey={revokeKey}
+              onGenerateSketch={() => setSketchSite(site)}
+            />
+          ))}
+
+          {sites.length === 0 && !loading && (
+            <div className="py-12 text-center rounded-xl border border-dashed border-border bg-muted/30">
+              <p className="text-sm text-muted-foreground italic">No wash sites registered yet. Add one above to get started.</p>
+            </div>
+          )}
+        </div>
+      </section>
 
       <Dialog open={!!revealedKey} onOpenChange={(o) => { if (!o) setRevealedKey(null); }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>API key created</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">Copy this key now — it won''t be shown again. Configure your ESP32 to send it in the <code className="text-foreground">x-site-api-key</code> header.</p>
-          <div className="rounded-lg bg-secondary p-3 font-mono text-xs break-all">{revealedKey}</div>
-          <Button onClick={() => { navigator.clipboard.writeText(revealedKey ?? ""); toast.success("Copied"); }}>
-            <Copy className="h-4 w-4" /> Copy
-          </Button>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <KeyRound className="h-5 w-5 text-primary" />
+              API Key Generated
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              <strong>Action required:</strong> Copy this key immediately. For security, it will never be displayed again.
+            </p>
+            <div className="relative">
+              <div className="rounded-lg bg-secondary/80 p-4 font-mono text-sm break-all border border-border/50 pr-12">
+                {revealedKey}
+              </div>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="absolute right-2 top-1/2 -translate-y-1/2 hover:bg-background"
+                onClick={() => { navigator.clipboard.writeText(revealedKey ?? ""); toast.success("Copied to clipboard"); }}
+              >
+                <Copy className="h-4 w-4" />
+              </Button>
+            </div>
+            <p className="text-[10px] text-muted-foreground italic bg-muted/50 p-2 rounded">
+              Note: Include this in the <code>x-site-api-key</code> header of your ESP32 requests.
+            </p>
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -325,35 +371,41 @@ function SmtpSettingsPanel() {
   const [port, setPort] = useState("587");
   const [userEmail, setUserEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [fromName, setFromName] = useState("Wash Dashboard");
+  const [fromName, setFromName] = useState("WashGrid Dashboard");
   const [fromEmail, setFromEmail] = useState("");
   const [encryption, setEncryption] = useState<"tls" | "ssl" | "none">("tls");
 
   useEffect(() => {
     get().then((data) => {
       if (data) {
-        setHost(data.host);
-        setPort(String(data.port));
-        setUserEmail(data.user_email);
-        setPassword(data.password);
-        setFromName(data.from_name);
-        setFromEmail(data.from_email);
-        setEncryption(data.encryption as any);
+        setHost(data.host || "");
+        setPort(String(data.port || "587"));
+        setUserEmail(data.user_email || "");
+        setPassword(data.password || "");
+        setFromName(data.from_name || "WashGrid Dashboard");
+        setFromEmail(data.from_email || "");
+        setEncryption((data.encryption as any) || "tls");
       }
       setLoading(false);
-    }).catch(() => setLoading(false));
+    }).catch((e) => {
+      console.warn("SMTP fetch failed (normal if not setup):", e);
+      setLoading(false);
+    });
   }, []); // eslint-disable-line
 
   const handleSave = async () => {
+    if (!host || !userEmail || !password) {
+      return toast.error("Host, User Email, and Password are required");
+    }
     setSaving(true);
     try {
       await update({
         host, port: Number(port), user_email: userEmail, password,
         from_name: fromName, from_email: fromEmail, encryption
       });
-      toast.success("SMTP settings updated");
+      toast.success("Mail server settings updated");
     } catch (e: any) {
-      toast.error(e.message ?? "Save failed");
+      toast.error(e.message ?? "Failed to save SMTP settings");
     } finally {
       setSaving(false);
     }
@@ -362,56 +414,62 @@ function SmtpSettingsPanel() {
   if (loading) return null;
 
   return (
-    <div className="rounded-xl border border-border bg-card p-5 shadow-card">
-      <div className="flex items-center gap-2 mb-4">
-        <Server className="h-5 w-5 text-primary" />
-        <h2 className="font-semibold text-lg">SMTP Configuration</h2>
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="space-y-1.5">
-          <Label>SMTP Host</Label>
-          <Input value={host} onChange={(e) => setHost(e.target.value)} placeholder="smtp.gmail.com" />
+    <div className="rounded-xl border border-border bg-card p-6 shadow-sm border-l-4 border-l-primary/50">
+      <div className="flex items-center gap-2 mb-6">
+        <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
+          <Server className="h-5 w-5 text-primary" />
         </div>
-        <div className="space-y-1.5">
+        <h2 className="font-semibold text-lg">System Mail Server (SMTP)</h2>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+        <div className="space-y-2">
+          <Label>Outbound Host</Label>
+          <Input value={host} onChange={(e) => setHost(e.target.value)} placeholder="e.g. smtp.postmarkapp.com" />
+        </div>
+        <div className="space-y-2">
           <Label>Port</Label>
           <Input type="number" value={port} onChange={(e) => setPort(e.target.value)} placeholder="587" />
         </div>
-        <div className="space-y-1.5">
-          <Label>Encryption</Label>
+        <div className="space-y-2">
+          <Label>Encryption Method</Label>
           <Select value={encryption} onValueChange={(v) => setEncryption(v as any)}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="tls">TLS (STARTTLS)</SelectItem>
-              <SelectItem value="ssl">SSL</SelectItem>
-              <SelectItem value="none">None</SelectItem>
+              <SelectItem value="tls">STARTTLS / TLS</SelectItem>
+              <SelectItem value="ssl">SSL / SMTPS</SelectItem>
+              <SelectItem value="none">Unencrypted (Not Recommended)</SelectItem>
             </SelectContent>
           </Select>
         </div>
-        <div className="space-y-1.5">
-          <Label>SMTP User / Email</Label>
-          <Input value={userEmail} onChange={(e) => setUserEmail(e.target.value)} placeholder="user@example.com" />
+        <div className="space-y-2">
+          <Label>User Email / Login</Label>
+          <Input value={userEmail} onChange={(e) => setUserEmail(e.target.value)} placeholder="smtp_user@domain.com" />
         </div>
-        <div className="space-y-1.5">
-          <Label>SMTP Password</Label>
+        <div className="space-y-2">
+          <Label>Account Password</Label>
           <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
         </div>
-        <div className="space-y-1.5">
-          <Label>Sender Name</Label>
-          <Input value={fromName} onChange={(e) => setFromName(e.target.value)} placeholder="Wash Reports" />
+        <div className="space-y-2">
+          <Label>Global Sender Name</Label>
+          <Input value={fromName} onChange={(e) => setFromName(e.target.value)} placeholder="WashGrid Automations" />
         </div>
-        <div className="sm:col-span-2 space-y-1.5">
-          <Label>Sender Email Address</Label>
-          <Input value={fromEmail} onChange={(e) => setFromEmail(e.target.value)} placeholder="reports@example.com" />
+        <div className="sm:col-span-2 space-y-2">
+          <Label>Global From Address</Label>
+          <Input value={fromEmail} onChange={(e) => setFromEmail(e.target.value)} placeholder="reports@yourdomain.com" />
         </div>
         <div className="flex items-end">
-          <Button onClick={handleSave} className="w-full" disabled={saving}>
-            {saving ? "Saving..." : "Update SMTP Settings"}
+          <Button onClick={handleSave} className="w-full font-medium" disabled={saving}>
+            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            Apply SMTP Configuration
           </Button>
         </div>
       </div>
-      <p className="text-xs text-muted-foreground mt-3">
-        Once configured, reports will be sent via this SMTP server instead of the default Gmail connector.
-      </p>
+      <div className="mt-4 p-3 rounded bg-muted/30 flex gap-2 items-start">
+        <Loader2 className="h-3 w-3 mt-1 shrink-0 text-muted-foreground" />
+        <p className="text-[11px] text-muted-foreground leading-relaxed">
+          <strong>Pro-tip:</strong> Use a dedicated transactional mail provider (Postmark, SendGrid, or Resend) for reliable report delivery. Gmail App Passwords work but are prone to rate limiting.
+        </p>
+      </div>
     </div>
   );
 }
@@ -436,112 +494,171 @@ function SiteAdminCard({
   const [group, setGroup] = useState("");
 
   return (
-    <div className="rounded-xl border border-border bg-card p-5 shadow-card">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="font-semibold text-lg">{site.name}</h3>
-          {site.location && <div className="text-xs text-muted-foreground">{site.location}</div>}
+    <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden transition-all hover:shadow-md">
+      <div className="bg-muted/30 px-6 py-4 flex items-center justify-between border-b border-border">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded bg-background border border-border flex items-center justify-center font-bold text-primary">
+            {site.name.charAt(0)}
+          </div>
+          <div>
+            <h3 className="font-bold text-lg leading-tight">{site.name}</h3>
+            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mt-0.5 uppercase tracking-wider font-medium">
+              <Cpu className="h-3 w-3" />
+              {site.location || "Remote Site"}
+              <span className="mx-1 opacity-30">•</span>
+              {meters.length} Sensor{meters.length === 1 ? "" : "s"}
+            </div>
+          </div>
         </div>
-        <div className="flex items-center gap-1">
-          <Button type="button" variant="outline" size="sm" onClick={onGenerateSketch} disabled={meters.length === 0}>
-            <Cpu className="h-4 w-4" /> ESP32 sketch
+        <div className="flex items-center gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={onGenerateSketch} disabled={meters.length === 0} className="h-8 text-xs font-semibold">
+            <Cpu className="h-3.5 w-3.5 mr-1.5" /> Sketch
           </Button>
-          <Button variant="ghost" size="sm" onClick={onRemoveSite}><Trash2 className="h-4 w-4" /></Button>
+          <Button variant="ghost" size="icon" onClick={onRemoveSite} className="h-8 w-8 text-destructive hover:bg-destructive/10"><Trash2 className="h-4 w-4" /></Button>
         </div>
       </div>
 
-      <div className="mt-4">
-        <h4 className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Meters</h4>
-        {meters.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No meters yet.</p>
-        ) : (
-          <div className="space-y-1.5">
+      <div className="p-6 space-y-8">
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <h4 className="text-xs font-bold uppercase tracking-widest text-muted-foreground/80">Meter & Sensor Configuration</h4>
+          </div>
+
+          <div className="space-y-2">
             {meters.map((m) => (
-              <div key={m.id} className="flex items-center justify-between rounded-md bg-secondary/50 px-3 py-2 text-sm">
-                <div className="flex items-center gap-3">
-                  <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-accent text-primary">{m.device_key}</span>
-                  <span className="font-medium">{m.name}</span>
-                  <span className="text-xs text-muted-foreground capitalize">{m.meter_type.replace("_", " ")}</span>
-                  {m.chemical_group ? <span className="text-xs px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-600 dark:text-purple-400">{m.chemical_group}</span> : null}
-                  {m.capacity ? <span className="text-xs text-muted-foreground">{m.capacity}{m.unit} cap</span> : null}
+              <div key={m.id} className="group flex items-center justify-between rounded-lg border border-border bg-background p-3 transition-colors hover:border-primary/30">
+                <div className="flex items-center gap-4">
+                  <div className="flex flex-col items-center justify-center px-2 py-1 rounded bg-muted font-mono text-[10px] font-bold text-muted-foreground">
+                    ID
+                    <span className="text-primary">{m.device_key}</span>
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold">{m.name}</div>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground/70">{m.meter_type.replace("_", " ")}</span>
+                      {m.chemical_group && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-500/10 text-indigo-500 font-bold border border-indigo-500/10">
+                          GRP: {m.chemical_group}
+                        </span>
+                      )}
+                      {m.capacity && <span className="text-[10px] text-muted-foreground/60">CAP: {m.capacity}{m.unit}</span>}
+                    </div>
+                  </div>
                 </div>
-                <Button variant="ghost" size="icon" onClick={() => onRemoveMeter(m.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                <Button variant="ghost" size="icon" onClick={() => onRemoveMeter(m.id)} className="h-8 w-8 opacity-0 group-hover:opacity-100"><Trash2 className="h-3.5 w-3.5" /></Button>
               </div>
             ))}
-          </div>
-        )}
 
-        <div className="mt-3 grid grid-cols-2 sm:grid-cols-6 gap-2">
-          <Select value={type} onValueChange={(v) => setType(v as any)}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="wash">Wash</SelectItem>
-              <SelectItem value="fresh_water">Fresh water</SelectItem>
-              <SelectItem value="chemical">Chemical level</SelectItem>
-              <SelectItem value="chemical_flow">Chemical flow</SelectItem>
-            </SelectContent>
-          </Select>
-          <Input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
-          <Input placeholder="device_key" value={deviceKey} onChange={(e) => setDeviceKey(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ""))} />
-          <Input placeholder="Unit" value={unit} onChange={(e) => setUnit(e.target.value)} />
-          <Input placeholder="Capacity" type="number" value={capacity} onChange={(e) => setCapacity(e.target.value)} />
-          <Input placeholder="Low alert" type="number" value={low} onChange={(e) => setLow(e.target.value)} />
-        </div>
-        {(type === "chemical" || type === "chemical_flow") && (
-          <div className="mt-2">
-            <Input placeholder="Chemical group (e.g. Soap, Wax) — pair level + flow with same group" value={group} onChange={(e) => setGroup(e.target.value)} />
+            {meters.length === 0 && (
+              <div className="text-center py-6 border-2 border-dashed border-border rounded-lg bg-muted/10">
+                <p className="text-xs text-muted-foreground italic">No sensors configured for this site.</p>
+              </div>
+            )}
           </div>
-        )}
-        <Button
-          size="sm"
-          className="mt-2"
-          onClick={async () => {
-            if (!name.trim() || !deviceKey.trim()) return toast.error("Name and device_key required");
-            const ok = await onAddMeter({
-              meter_type: type,
-              name: name.trim(),
-              unit,
-              device_key: deviceKey.trim(),
-              capacity: capacity ? Number(capacity) : null,
-              low_threshold: low ? Number(low) : null,
-              chemical_group: group.trim() || null,
-            });
-            if (!ok) return;
-            setName("");
-            setDeviceKey("");
-            setCapacity("");
-            setLow("");
-            setGroup("");
-          }}
-        ><Plus className="h-4 w-4" /> Add meter</Button>
-      </div>
 
-      <div className="mt-5">
-        <div className="flex items-center justify-between mb-2">
-          <h4 className="text-xs uppercase tracking-wide text-muted-foreground">ESP32 API keys</h4>
-          <Button size="sm" variant="outline" onClick={onGenerateKey}><KeyRound className="h-3.5 w-3.5" /> Generate</Button>
+          <div className="mt-6 rounded-lg bg-muted/20 p-4 border border-border/40">
+            <p className="text-[10px] font-bold uppercase text-muted-foreground mb-3 tracking-widest">Connect New Meter</p>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+              <div className="space-y-1">
+                <Label className="text-[10px]">Type</Label>
+                <Select value={type} onValueChange={(v) => setType(v as any)}>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="wash">Wash</SelectItem>
+                    <SelectItem value="fresh_water">Water</SelectItem>
+                    <SelectItem value="chemical">Level</SelectItem>
+                    <SelectItem value="chemical_flow">Flow</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[10px]">Name</Label>
+                <Input className="h-8 text-xs" placeholder="e.g. Soap 1" value={name} onChange={(e) => setName(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[10px]">Device Key</Label>
+                <Input className="h-8 text-xs" placeholder="esp_id" value={deviceKey} onChange={(e) => setDeviceKey(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ""))} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[10px]">Unit</Label>
+                <Input className="h-8 text-xs" placeholder="L / ml" value={unit} onChange={(e) => setUnit(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[10px]">Cap</Label>
+                <Input className="h-8 text-xs" placeholder="200" type="number" value={capacity} onChange={(e) => setCapacity(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[10px]">Alert</Label>
+                <Input className="h-8 text-xs" placeholder="20" type="number" value={low} onChange={(e) => setLow(e.target.value)} />
+              </div>
+            </div>
+
+            <div className="mt-3 flex flex-col md:flex-row gap-3 items-end">
+              {(type === "chemical" || type === "chemical_flow") && (
+                <div className="flex-1 space-y-1 w-full">
+                  <Label className="text-[10px]">Chemical Grouping (optional)</Label>
+                  <Input className="h-8 text-xs" placeholder="e.g. Blue Soap" value={group} onChange={(e) => setGroup(e.target.value)} />
+                </div>
+              )}
+              <Button
+                size="sm"
+                className="h-8 px-4 font-bold text-[11px]"
+                onClick={async () => {
+                  const ok = await onAddMeter({
+                    meter_type: type,
+                    name: name.trim(),
+                    unit,
+                    device_key: deviceKey.trim(),
+                    capacity: capacity ? Number(capacity) : null,
+                    low_threshold: low ? Number(low) : null,
+                    chemical_group: group.trim() || null,
+                  });
+                  if (!ok) return;
+                  setName(""); setDeviceKey(""); setCapacity(""); setLow(""); setGroup("");
+                }}
+              ><Plus className="h-3.5 w-3.5 mr-1" /> Add Sensor</Button>
+            </div>
+          </div>
         </div>
-        {keys.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No keys yet.</p>
-        ) : (
-          <div className="space-y-1.5">
+
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <h4 className="text-xs font-bold uppercase tracking-widest text-muted-foreground/80">Active ESP32 Access Keys</h4>
+            <Button size="sm" variant="outline" onClick={onGenerateKey} className="h-7 text-[10px] font-bold uppercase border-dashed"><KeyRound className="h-3 w-3 mr-1.5" /> New Key</Button>
+          </div>
+
+          <div className="grid gap-2">
             {keys.map((k) => (
-              <div key={k.id} className="flex items-center justify-between rounded-md bg-secondary/50 px-3 py-2 text-sm">
-                <div className="flex items-center gap-3">
-                  <span className="font-mono text-xs">{k.key_prefix}…</span>
-                  {k.revoked && <span className="text-xs text-destructive">revoked</span>}
-                  <span className="text-xs text-muted-foreground">
-                    {k.last_used_at ? `Last used ${new Date(k.last_used_at).toLocaleString()}` : "Never used"}
-                  </span>
+              <div key={k.id} className="flex items-center justify-between rounded-md border border-border/60 px-4 py-2.5 bg-muted/10">
+                <div className="flex items-center gap-4">
+                  <div className="font-mono text-[11px] bg-background border border-border px-2 py-0.5 rounded font-bold shadow-sm">
+                    {k.key_prefix}••••••••
+                  </div>
+                  {k.revoked ? (
+                    <span className="text-[9px] font-bold uppercase text-destructive bg-destructive/10 px-1.5 py-0.5 rounded">Revoked</span>
+                  ) : (
+                    <span className="text-[9px] font-bold uppercase text-emerald-500 bg-emerald-500/10 px-1.5 py-0.5 rounded">Active</span>
+                  )}
+                  <div className="text-[10px] text-muted-foreground">
+                    {k.last_used_at ? `Activity: ${new Date(k.last_used_at).toLocaleDateString()}` : "Not used"}
+                  </div>
                 </div>
-                {!k.revoked && <Button variant="ghost" size="sm" onClick={() => onRevokeKey(k.id)}>Revoke</Button>}
+                {!k.revoked && (
+                  <Button variant="ghost" size="sm" onClick={() => onRevokeKey(k.id)} className="h-7 text-[10px] font-bold text-destructive hover:bg-destructive/10 uppercase tracking-wider">Deactivate</Button>
+                )}
               </div>
             ))}
-          </div>
-        )}
-      </div>
 
-      <ReportSettings site={site} onSaved={() => { /* parent will refetch on next mount */ }} />
+            {keys.length === 0 && (
+              <p className="text-xs text-muted-foreground italic text-center py-4 bg-muted/10 rounded-lg">No security keys active. Generate one to start streaming data.</p>
+            )}
+          </div>
+        </div>
+
+        <div className="pt-4 border-t border-border/60">
+          <ReportSettings site={site} onSaved={() => { /* parent will refetch on next mount */ }} />
+        </div>
+      </div>
     </div>
   );
 }
@@ -559,14 +676,14 @@ function ReportSettings({ site, onSaved }: { site: Site; onSaved: () => void }) 
     setSaving(true);
     const list = recipients.split(/[,\s;]+/).map((s) => s.trim()).filter(Boolean);
     const bad = list.find((e) => !/.+@.+\..+/.test(e));
-    if (bad) { setSaving(false); return toast.error(`Invalid email: ${bad}`); }
+    if (bad) { setSaving(false); return toast.error(`Invalid email address: ${bad}`); }
     const { error } = await supabase.from("sites").update({
       report_hour: hour, timezone: tz, report_recipients: list,
       daily_report_enabled: daily, monthly_report_enabled: monthly,
     }).eq("id", site.id);
     setSaving(false);
     if (error) return toast.error(error.message);
-    toast.success("Report settings saved");
+    toast.success("Automated report settings saved");
     onSaved();
   };
 
@@ -575,52 +692,73 @@ function ReportSettings({ site, onSaved }: { site: Site; onSaved: () => void }) 
     try {
       const res = await fetch(`/api/public/hooks/send-reports?force=${site.id}`, { method: "POST" });
       const j = await res.json();
-      if (!res.ok) throw new Error(JSON.stringify(j));
-      toast.success("Test report sent (check inbox)");
+      if (!res.ok) throw new Error(j.error || "Network error");
+      toast.success("Test report dispatched successfully!");
     } catch (e: any) {
-      toast.error(e.message ?? "Send failed");
+      toast.error(e.message ?? "Failed to send test report");
     } finally { setSending(false); }
   };
 
   return (
-    <div className="mt-5 rounded-lg border border-border p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h4 className="text-xs uppercase tracking-wide text-muted-foreground flex items-center gap-1.5"><Mail className="h-3.5 w-3.5" /> Email reports</h4>
+    <div className="rounded-xl border border-border/50 bg-primary/5 p-6">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+        <div className="flex items-center gap-3">
+          <div className="h-8 w-8 rounded bg-primary/20 flex items-center justify-center">
+            <Mail className="h-4 w-4 text-primary" />
+          </div>
+          <div>
+            <h4 className="text-sm font-bold uppercase tracking-widest text-primary/80">Automated Site Reports</h4>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Scheduled email analytics for site performance.</p>
+          </div>
+        </div>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={sendTest} disabled={sending}><Send className="h-3.5 w-3.5" /> {sending ? "Sending…" : "Send test now"}</Button>
-          <Button size="sm" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
+          <Button size="sm" variant="outline" onClick={sendTest} disabled={sending} className="h-8 text-xs font-bold bg-background">
+            {sending ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : <Send className="mr-2 h-3 w-3" />}
+            Instant Test
+          </Button>
+          <Button size="sm" onClick={save} disabled={saving} className="h-8 text-xs font-bold">
+            {saving ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : null}
+            Save Schedule
+          </Button>
         </div>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="space-y-1.5">
-          <Label>Send hour (24h, site local)</Label>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+        <div className="space-y-2">
+          <Label className="text-xs font-semibold">Scheduled Send Time</Label>
           <Select value={String(hour)} onValueChange={(v) => setHour(Number(v))}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectTrigger className="h-9 bg-background"><SelectValue /></SelectTrigger>
             <SelectContent>
               {Array.from({ length: 24 }).map((_, i) => (
-                <SelectItem key={i} value={String(i)}>{String(i).padStart(2, "0")}:00</SelectItem>
+                <SelectItem key={i} value={String(i)}>{String(i).padStart(2, "0")}:00 (Site Local)</SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
-        <div className="space-y-1.5">
-          <Label>Timezone (IANA)</Label>
-          <Input value={tz} onChange={(e) => setTz(e.target.value)} placeholder="Africa/Johannesburg" />
+        <div className="space-y-2">
+          <Label className="text-xs font-semibold">Site Timezone</Label>
+          <Input className="h-9 bg-background" value={tz} onChange={(e) => setTz(e.target.value)} placeholder="e.g. Africa/Johannesburg" />
         </div>
-        <div className="sm:col-span-2 space-y-1.5">
-          <Label>Recipients (comma-separated)</Label>
-          <Textarea rows={2} value={recipients} onChange={(e) => setRecipients(e.target.value)} placeholder="ops@example.com, manager@example.com" />
+        <div className="sm:col-span-2 space-y-2">
+          <Label className="text-xs font-semibold">Delivery Recipients</Label>
+          <Textarea className="min-h-[80px] bg-background text-sm" value={recipients} onChange={(e) => setRecipients(e.target.value)} placeholder="manager@wash.com, ops@wash.com" />
+          <p className="text-[10px] text-muted-foreground/70 px-1">Multiple addresses supported. Separate with commas.</p>
         </div>
-        <label className="flex items-center justify-between rounded-md bg-secondary/50 px-3 py-2 text-sm">
-          <span>Daily report (every morning)</span>
+        <div className="flex items-center justify-between rounded-lg border border-primary/10 bg-background px-4 py-3">
+          <div className="space-y-0.5">
+            <span className="text-xs font-bold">Daily Intelligence</span>
+            <p className="text-[9px] text-muted-foreground">Every morning at {String(hour).padStart(2, "0")}:00</p>
+          </div>
           <Switch checked={daily} onCheckedChange={setDaily} />
-        </label>
-        <label className="flex items-center justify-between rounded-md bg-secondary/50 px-3 py-2 text-sm">
-          <span>Monthly CSV (1st of month)</span>
+        </div>
+        <div className="flex items-center justify-between rounded-lg border border-primary/10 bg-background px-4 py-3">
+          <div className="space-y-0.5">
+            <span className="text-xs font-bold">Monthly CSV Analytics</span>
+            <p className="text-[9px] text-muted-foreground">Full site data on the 1st of every month.</p>
+          </div>
           <Switch checked={monthly} onCheckedChange={setMonthly} />
-        </label>
+        </div>
       </div>
-      <p className="text-xs text-muted-foreground mt-2">Reports are sent using your configured SMTP settings.</p>
     </div>
   );
 }
@@ -633,7 +771,6 @@ function buildEsp32Sketch(site: Site, meters: Meter[]) {
   const varDecls = meters
     .map((m) => `float v_${m.device_key.replace(/[^a-zA-Z0-9]/g, "_")} = 0; // ${m.name}`)
     .join("\n");
-  // Each line appends one JSON object; leading comma separates array entries (valid C++ / JSON).
   const jsonParts = meters
     .map((m, i) => {
       const v = `v_${m.device_key.replace(/[^a-zA-Z0-9]/g, "_")}`;
@@ -709,18 +846,28 @@ function EspSketchDialog({ site, meters, onClose }: { site: Site | null; meters:
   const code = site ? buildEsp32Sketch(site, meters) : "";
   return (
     <Dialog open={!!site} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col gap-4 overflow-hidden">
+      <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col gap-4 overflow-hidden shadow-2xl">
         <DialogHeader className="shrink-0">
-          <DialogTitle>ESP32 sketch — {site?.name}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <Cpu className="h-5 w-5 text-primary" />
+            ESP32 Configuration Script — {site?.name}
+          </DialogTitle>
         </DialogHeader>
-        <p className="text-sm text-muted-foreground shrink-0">
-          Paste this into the Arduino IDE. Replace the Wi-Fi creds and the <code className="text-foreground">SITE_API_KEY</code> with the one generated above. Wire your pulse-counter / tank-level reads into the <code className="text-foreground">TODO</code> spots.
+        <p className="text-sm text-muted-foreground shrink-0 leading-relaxed">
+          Copy the code below into the Arduino IDE. Ensure you have the <strong>ESP32 Board Library</strong> installed. Wire your pulse counters or level sensors to the designated GPIO pins and map them to the <code>TODO</code> variables at the bottom of the sketch.
         </p>
-        <Textarea readOnly value={code} className="font-mono text-xs min-h-[280px] flex-1 resize-y" spellCheck={false} />
-        <DialogFooter className="shrink-0">
-          <Button type="button" onClick={() => { navigator.clipboard.writeText(code); toast.success("Sketch copied"); }}>
-            <Copy className="h-4 w-4" /> Copy sketch
+        <div className="flex-1 relative overflow-hidden rounded-lg border border-border bg-black/5">
+          <Textarea readOnly value={code} className="font-mono text-[11px] h-full w-full resize-none bg-transparent p-6 leading-relaxed" spellCheck={false} />
+          <Button
+            size="sm"
+            className="absolute right-4 top-4 shadow-lg h-8 px-4 font-bold"
+            onClick={() => { navigator.clipboard.writeText(code); toast.success("Sketch copied to clipboard"); }}
+          >
+            <Copy className="h-3.5 w-3.5 mr-2" /> Copy to Clipboard
           </Button>
+        </div>
+        <DialogFooter className="shrink-0 border-t pt-4">
+          <Button type="button" variant="outline" onClick={onClose} className="h-9 font-semibold">Close</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

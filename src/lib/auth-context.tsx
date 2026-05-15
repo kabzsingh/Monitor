@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Session, User } from "@supabase/supabase-js";
+import { signIn as serverSignIn } from "./auth";
 
 type Role = "admin" | "operator";
 
@@ -23,13 +24,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const fetchRoles = async (userId: string | undefined) => {
     if (!userId) { setRoles([]); return; }
-    const { data } = await supabase.from("user_roles").select("role").eq("user_id", userId);
-    setRoles((data ?? []).map((r: { role: Role }) => r.role));
+    try {
+      const { data, error } = await supabase.from("user_roles").select("role").eq("user_id", userId);
+      if (error) throw error;
+      setRoles((data ?? []).map((r: { role: Role }) => r.role));
+    } catch (e) {
+      console.error("Failed to fetch roles:", e);
+      setRoles([]);
+    }
   };
 
   useEffect(() => {
     const applySession = async (s: Session | null) => {
       if (s) {
+        // Sync to server-side cookies
+        try {
+          await serverSignIn({
+            data: {
+              accessToken: s.access_token,
+              refreshToken: s.refresh_token || "",
+            }
+          });
+        } catch (e) {
+          console.error("Failed to sync session to server:", e);
+        }
+
         const { data, error } = await supabase.auth.getUser();
         if (error || !data.user) {
           await supabase.auth.signOut();
@@ -48,7 +67,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
       setTimeout(() => { void applySession(s); }, 0);
     });
+
     supabase.auth.getSession().then(({ data }) => applySession(data.session)).finally(() => setLoading(false));
+
     return () => sub.subscription.unsubscribe();
   }, []);
 

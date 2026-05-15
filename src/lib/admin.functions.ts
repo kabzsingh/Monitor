@@ -33,10 +33,15 @@ async function sha256(message: string) {
 type BootstrapResult = { granted: boolean; is_admin: boolean };
 
 async function bootstrapViaRpc(supabase: AuthSupabase): Promise<{ granted: boolean; isAdmin: boolean }> {
-  const { data, error } = await supabase.rpc("bootstrap_first_admin");
-  if (error) throw error;
-  const row = data as BootstrapResult | null;
-  return { granted: row?.granted ?? false, isAdmin: row?.is_admin ?? false };
+  try {
+    const { data, error } = await supabase.rpc("bootstrap_first_admin");
+    if (error) throw error;
+    const row = data as BootstrapResult | null;
+    return { granted: row?.granted ?? false, isAdmin: row?.is_admin ?? false };
+  } catch (e: any) {
+    console.warn("[Bootstrap] RPC method failed, might not be installed:", e.message);
+    return { granted: false, isAdmin: false };
+  }
 }
 
 /** Fallback when migration not applied yet — needs SUPABASE_SERVICE_ROLE_KEY in env. */
@@ -45,7 +50,8 @@ async function bootstrapViaServiceRole(userId: string): Promise<{ granted: boole
     .from("user_roles")
     .select("*", { count: "exact", head: true })
     .eq("role", "admin");
-  if (cErr) throw new Error(cErr.message);
+
+  if (cErr) throw new Error("Database error while checking admins: " + cErr.message);
 
   if ((count ?? 0) > 0) {
     const { data: me } = await supabaseAdmin
@@ -58,7 +64,7 @@ async function bootstrapViaServiceRole(userId: string): Promise<{ granted: boole
   }
 
   const { error } = await supabaseAdmin.from("user_roles").insert({ user_id: userId, role: "admin" });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error("Failed to grant admin role: " + error.message);
   return { granted: true, isAdmin: true };
 }
 
@@ -133,13 +139,12 @@ export const grantAdminBootstrap = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     try {
+      // 1. Try using Service Role (Automated, bypasses RLS)
       return await bootstrapViaServiceRole(context.userId);
-    } catch (svcErr: unknown) {
-      const svcMsg = svcErr instanceof Error ? svcErr.message : String(svcErr);
-      if (svcMsg.includes("SUPABASE_SERVICE_ROLE_KEY")) {
-        return await bootstrapViaRpc(context.supabase);
-      }
-      throw svcErr;
+    } catch (svcErr: any) {
+      // 2. If Service Role key is missing or blocked, try the RPC method
+      console.warn("[Admin] Service role bootstrap failed, trying RPC:", svcErr.message);
+      return await bootstrapViaRpc(context.supabase);
     }
   });
 

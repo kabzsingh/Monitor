@@ -2,23 +2,31 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
-function createSupabaseClient() {
-  // Use import.meta.env for client-side (Vite build-time replacement)
-  // Fall back to process.env for SSR (server-side rendering)
-  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-  const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
-
-  if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
-    const missing = [
-      ...(!SUPABASE_URL ? ['SUPABASE_URL'] : []),
-      ...(!SUPABASE_PUBLISHABLE_KEY ? ['SUPABASE_PUBLISHABLE_KEY'] : []),
-    ];
-    const message = `Missing Supabase environment variable(s): ${missing.join(', ')}. Connect Supabase in Lovable Cloud.`;
-    console.error(`[Supabase] ${message}`);
-    throw new Error(message);
+// Isomorphic helper to get environment variables
+function getEnv(key: string): string | undefined {
+  // 1. Browser/Vite check
+  if (typeof window !== 'undefined') {
+    return (import.meta.env as any)[`VITE_${key}`];
   }
 
-  return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+  // 2. Server-side check (TanStack Start/Cloudflare)
+  // We use a global check to avoid importing server-only modules in the browser bundle
+  const globalEnv = (globalThis as any).process?.env || {};
+  return globalEnv[`VITE_${key}`] || globalEnv[key];
+}
+
+function createSupabaseClient() {
+  const url = getEnv('SUPABASE_URL');
+  const key = getEnv('SUPABASE_PUBLISHABLE_KEY') || getEnv('SUPABASE_ANON_KEY');
+
+  if (!url || !key) {
+    if (typeof window !== 'undefined') {
+      console.warn('Supabase configuration missing. Ensure VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY are set.');
+    }
+    return null as any;
+  }
+
+  return createClient<Database>(url, key, {
     auth: {
       storage: typeof window !== 'undefined' ? localStorage : undefined,
       persistSession: true,
@@ -29,12 +37,9 @@ function createSupabaseClient() {
 
 let _supabase: ReturnType<typeof createSupabaseClient> | undefined;
 
-// Import the supabase client like this:
-// import { supabase } from "@/integrations/supabase/client";
 export const supabase = new Proxy({} as ReturnType<typeof createSupabaseClient>, {
   get(_, prop, receiver) {
     if (!_supabase) _supabase = createSupabaseClient();
     return Reflect.get(_supabase, prop, receiver);
   },
 });
-

@@ -3,20 +3,29 @@
 // Use this for admin operations in server functions and server routes only.
 // For user-authenticated queries (with RLS), use the auth middleware instead.
 import { createClient } from '@supabase/supabase-js';
+import { getEvent } from 'vinxi/http';
 import type { Database } from './types';
 
+function getEnv(key: string): string | undefined {
+  const event = getEvent();
+  // Check Cloudflare env first, then process.env
+  const cloudflareEnv = (event?.context as any)?.cloudflare?.env;
+  return cloudflareEnv?.[key] || process.env[key];
+}
+
 function createSupabaseAdminClient() {
-  const SUPABASE_URL = process.env.SUPABASE_URL;
-  const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const SUPABASE_URL = getEnv('SUPABASE_URL');
+  const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY');
 
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     const missing = [
       ...(!SUPABASE_URL ? ['SUPABASE_URL'] : []),
       ...(!SUPABASE_SERVICE_ROLE_KEY ? ['SUPABASE_SERVICE_ROLE_KEY'] : []),
     ];
-    const message = `Missing Supabase environment variable(s): ${missing.join(', ')}. Connect Supabase in Lovable Cloud.`;
-    console.error(`[Supabase] ${message}`);
-    throw new Error(message);
+    const message = `Missing Supabase environment variable(s): ${missing.join(', ')}. Connect Supabase in Lovable Cloud or set them in your deployment platform.`;
+    console.error(`[Supabase Admin] ${message}`);
+    // Don't throw immediately, let the Proxy handle it or provide a more useful error during usage
+    return null;
   }
 
   return createClient<Database>(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -33,9 +42,12 @@ let _supabaseAdmin: ReturnType<typeof createSupabaseAdminClient> | undefined;
 // Server-side Supabase client with service role - bypasses RLS
 // SECURITY: Only use this for trusted server-side operations, never expose to client code
 // Import like: import { supabaseAdmin } from "@/integrations/supabase/client.server";
-export const supabaseAdmin = new Proxy({} as ReturnType<typeof createSupabaseAdminClient>, {
+export const supabaseAdmin = new Proxy({} as Exclude<ReturnType<typeof createSupabaseAdminClient>, null>, {
   get(_, prop, receiver) {
     if (!_supabaseAdmin) _supabaseAdmin = createSupabaseAdminClient();
+    if (!_supabaseAdmin) {
+      throw new Error("Supabase Admin client could not be initialized. Missing environment variables.");
+    }
     return Reflect.get(_supabaseAdmin, prop, receiver);
   },
 });
