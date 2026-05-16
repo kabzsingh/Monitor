@@ -7,12 +7,11 @@ import {
   upsertSmtpSettings as dbUpsertSmtpSettings,
   createApiKey as dbCreateApiKey,
   createSite,
-  createMeter
+  createMeter,
 } from "@/lib/db";
 import { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 import { z } from "zod";
-import { getEvent } from "vinxi/http";
 
 type AuthSupabase = SupabaseClient<Database>;
 
@@ -41,7 +40,9 @@ async function sha256(message: string) {
 
 type BootstrapResult = { granted: boolean; is_admin: boolean };
 
-async function bootstrapViaRpc(supabase: AuthSupabase): Promise<{ granted: boolean; isAdmin: boolean }> {
+async function bootstrapViaRpc(
+  supabase: AuthSupabase,
+): Promise<{ granted: boolean; isAdmin: boolean }> {
   try {
     const { data, error } = await supabase.rpc("bootstrap_first_admin");
     if (error) throw error;
@@ -54,7 +55,10 @@ async function bootstrapViaRpc(supabase: AuthSupabase): Promise<{ granted: boole
 }
 
 /** Fallback when migration not applied yet — needs SUPABASE_SERVICE_ROLE_KEY in env. */
-async function bootstrapViaServiceRole(env: Env, userId: string): Promise<{ granted: boolean; isAdmin: boolean }> {
+async function bootstrapViaServiceRole(
+  env: Env,
+  userId: string,
+): Promise<{ granted: boolean; isAdmin: boolean }> {
   const dbAdmin = getSupabaseAdmin(env);
 
   const { count, error: cErr } = await dbAdmin
@@ -139,6 +143,7 @@ export const updateSmtpSettings = createServerFn({ method: "POST" })
 export const grantAdminBootstrap = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
+    const { getEvent } = await import("vinxi/http");
     const event = getEvent();
     const env = (event?.context as any)?.cloudflare?.env as Env;
 

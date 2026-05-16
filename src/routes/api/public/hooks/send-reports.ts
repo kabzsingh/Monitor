@@ -1,48 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { getSupabaseAdmin, type Env } from "@/lib/supabase";
-import { getSmtpSettings, logReport } from "@/lib/db";
+import { getSmtpSettings } from "@/lib/db";
 import { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 import nodemailer from "nodemailer";
-import { getEvent } from "vinxi/http";
 
 type Client = SupabaseClient<Database>;
 
 function b64url(s: string) {
   return Buffer.from(s, "utf-8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-function buildRawWithAttachment(
-  to: string[],
-  subject: string,
-  text: string,
-  attachment: { filename: string; mime: string; content: string },
-) {
-  const boundary = "report_" + Math.random().toString(36).slice(2);
-  const headers = [
-    `To: ${to.join(", ")}`,
-    `Subject: =?UTF-8?B?${Buffer.from(subject, "utf-8").toString("base64")}?=`,
-    "MIME-Version: 1.0",
-    `Content-Type: multipart/mixed; boundary="${boundary}"`,
-  ].join("\r\n");
-  const attachmentB64 = Buffer.from(attachment.content, "utf-8")
-    .toString("base64")
-    .replace(/(.{76})/g, "$1\r\n");
-  const body = [
-    `--${boundary}`,
-    'Content-Type: text/plain; charset="UTF-8"',
-    "Content-Transfer-Encoding: 7bit",
-    "",
-    text,
-    `--${boundary}`,
-    `Content-Type: ${attachment.mime}; name="${attachment.filename}"`,
-    "Content-Transfer-Encoding: base64",
-    `Content-Disposition: attachment; filename="${attachment.filename}"`,
-    "",
-    attachmentB64,
-    `--${boundary}--`,
-  ].join("\r\n");
-  return b64url(headers + "\r\n\r\n" + body);
 }
 
 async function sendEmail(
@@ -52,7 +18,6 @@ async function sendEmail(
   text: string,
   attachment: { filename: string; mime: string; content: string },
 ) {
-  // Try fetching SMTP settings from the database (Configured via Admin Console)
   const smtp = await getSmtpSettings(db);
 
   if (smtp && smtp.host && smtp.user_email) {
@@ -90,7 +55,6 @@ async function sendEmail(
   }
 }
 
-// Returns { hour, dayOfMonth, ymd } in the given IANA timezone for a given instant.
 function nowInTz(tz: string, instant = new Date()) {
   const fmt = new Intl.DateTimeFormat("en-CA", {
     timeZone: tz,
@@ -297,6 +261,7 @@ export const Route = createFileRoute("/api/public/hooks/send-reports")({
   server: {
     handlers: {
       POST: async ({ request }) => {
+        const { getEvent } = await import("vinxi/http");
         const event = getEvent();
         const env = (event?.context as any)?.cloudflare?.env as Env;
         const db = getSupabaseAdmin(env);

@@ -13,6 +13,17 @@ export async function sha256(message: string) {
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+// ── Users & Roles ──────────────────────────────────────
+export async function getUserRole(db: Client, userId: string) {
+  const { data, error } = await db
+    .from("user_roles")
+    .select("*")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
 // ── Sites ──────────────────────────────────────────────
 export async function getSites(db: Client) {
   const { data, error } = await db.from("sites").select("*").order("name");

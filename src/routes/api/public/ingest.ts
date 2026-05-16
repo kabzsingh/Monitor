@@ -1,8 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { getSupabaseAdmin, type Env } from "@/lib/supabase";
-import { getApiKeyByHash, getMetersForSite, insertReading } from "@/lib/db";
-import { getEvent } from "vinxi/http";
-import crypto from "crypto";
+import { getApiKeyByHash, getMetersForSite } from "@/lib/db";
 import { z } from "zod";
 
 const PayloadSchema = z.object({
@@ -21,12 +19,23 @@ function corsHeaders() {
   };
 }
 
+async function sha256(message: string) {
+  const msgUint8 = new TextEncoder().encode(message);
+  const cryptoObj = globalThis.crypto;
+  if (!cryptoObj?.subtle) {
+    throw new Error("Web Crypto Subtle API is not available.");
+  }
+  const hashBuffer = await cryptoObj.subtle.digest("SHA-256", msgUint8);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export const Route = createFileRoute("/api/public/ingest")({
   server: {
     handlers: {
       OPTIONS: async () => new Response(null, { status: 204, headers: corsHeaders() }),
       POST: async ({ request }) => {
-        // Access Cloudflare environment via Vinxi event context
+        const { getEvent } = await import("vinxi/http");
         const event = getEvent();
         const env = (event?.context as any)?.cloudflare?.env as Env;
 
@@ -41,8 +50,7 @@ export const Route = createFileRoute("/api/public/ingest")({
           request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || "";
         if (!apiKey) return json({ error: "Missing x-site-api-key" }, 401);
 
-        // Hash the API key to compare with stored hashes
-        const hash = crypto.createHash("sha256").update(apiKey).digest("hex");
+        const hash = await sha256(apiKey);
 
         let keyRow;
         try {
@@ -79,11 +87,9 @@ export const Route = createFileRoute("/api/public/ingest")({
 
         if (rows.length === 0) return json({ error: "No matching meters", unknown }, 400);
 
-        // Insert readings using the db helper
         const { error: insErr } = await db.from("readings").insert(rows);
         if (insErr) return json({ error: insErr.message }, 500);
 
-        // Update last used timestamp
         await db.from("site_api_keys")
           .update({ last_used_at: new Date().toISOString() })
           .eq("key_hash", hash);

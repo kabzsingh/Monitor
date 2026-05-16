@@ -1,12 +1,12 @@
-import { createClient } from '@supabase/supabase-js';
-import { getEvent } from 'vinxi/http';
-import type { Database } from './types';
+import { createClient } from "@supabase/supabase-js";
+import type { Database } from "./types";
 
-function getEnv(key: string): string | undefined {
+async function getEnv(key: string): Promise<string | undefined> {
   let value: string | undefined;
 
   // 1. Try vinxi event context (Cloudflare/Server)
   try {
+    const { getEvent } = await import("vinxi/http");
     const event = getEvent();
     const cloudflareEnv = (event?.context as any)?.cloudflare?.env;
     value = cloudflareEnv?.[key] || cloudflareEnv?.[`VITE_${key}`];
@@ -21,9 +21,9 @@ function getEnv(key: string): string | undefined {
   return value;
 }
 
-function createSupabaseAdminClient() {
-  const url = getEnv('SUPABASE_URL');
-  const key = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+async function createSupabaseAdminClient() {
+  const url = await getEnv("SUPABASE_URL");
+  const key = await getEnv("SUPABASE_SERVICE_ROLE_KEY");
 
   if (!url || !key) {
     return null;
@@ -34,18 +34,39 @@ function createSupabaseAdminClient() {
       storage: undefined,
       persistSession: false,
       autoRefreshToken: false,
-    }
+    },
   });
 }
 
-let _supabaseAdmin: ReturnType<typeof createSupabaseAdminClient> | undefined;
+// Note: Using a proxy with async initialization for the admin client
+let _supabaseAdmin: any | undefined;
 
-export const supabaseAdmin = new Proxy({} as Exclude<ReturnType<typeof createSupabaseAdminClient>, null>, {
-  get(_, prop, receiver) {
-    if (!_supabaseAdmin) _supabaseAdmin = createSupabaseAdminClient();
+export const supabaseAdmin = new Proxy({} as any, {
+  get(_, prop) {
+    if (prop === "then") return undefined; // Avoid promise-like behavior if not intended
+
+    // This is tricky for a synchronous proxy to handle an async client.
+    // In practice, supabaseAdmin should probably be accessed via an async helper
+    // or we should ensure it's initialized before use in server functions.
+
+    // For now, we'll throw a helpful error if someone tries to use it synchronously
+    // without it being ready, but ideally we'd use the getServerContext pattern.
     if (!_supabaseAdmin) {
-      throw new Error("Supabase Admin client could not be initialized. Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.");
+      throw new Error("Supabase Admin client must be initialized asynchronously or accessed via getServerContext().");
     }
-    return Reflect.get(_supabaseAdmin, prop, receiver);
+    return Reflect.get(_supabaseAdmin, prop);
   },
 });
+
+/**
+ * Recommended way to get the admin client on the server.
+ */
+export async function getAdminClient() {
+  if (!_supabaseAdmin) {
+    _supabaseAdmin = await createSupabaseAdminClient();
+  }
+  if (!_supabaseAdmin) {
+    throw new Error("Supabase Admin client could not be initialized. Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.");
+  }
+  return _supabaseAdmin;
+}
