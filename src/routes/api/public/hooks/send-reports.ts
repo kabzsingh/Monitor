@@ -1,28 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { getSupabaseAdmin, type Env } from "@/lib/supabase";
+import { getSmtpSettings, logReport } from "@/lib/db";
+import { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/integrations/supabase/types";
 import nodemailer from "nodemailer";
 import { getEvent } from "vinxi/http";
 
-/**
- * Robust environment variable resolver for Cloudflare Workers, Node.js, and Vite.
- */
-function getEnv(key: string): string | undefined {
-  try {
-    const event = getEvent();
-    const cloudflareEnv = (event?.context as any)?.cloudflare?.env || {};
-    const processEnv = (globalThis as any).process?.env || {};
-
-    return (
-      cloudflareEnv[key] ||
-      cloudflareEnv[`VITE_${key}`] ||
-      processEnv[key] ||
-      processEnv[`VITE_${key}`]
-    );
-  } catch (e) {
-    const processEnv = (globalThis as any).process?.env || {};
-    return processEnv[key] || processEnv[`VITE_${key}`];
-  }
-}
+type Client = SupabaseClient<Database>;
 
 function b64url(s: string) {
   return Buffer.from(s, "utf-8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -62,13 +46,14 @@ function buildRawWithAttachment(
 }
 
 async function sendEmail(
+  db: Client,
   to: string[],
   subject: string,
   text: string,
   attachment: { filename: string; mime: string; content: string },
 ) {
   // Try fetching SMTP settings from the database (Configured via Admin Console)
-  const { data: smtp } = await supabaseAdmin.from("smtp_settings").select("*").eq("id", true).maybeSingle();
+  const smtp = await getSmtpSettings(db);
 
   if (smtp && smtp.host && smtp.user_email) {
     try {
@@ -130,12 +115,12 @@ function escapeCsv(v: any) {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-async function fetchReadings(siteId: string, fromIso: string, toIso: string) {
+async function fetchReadings(db: Client, siteId: string, fromIso: string, toIso: string) {
   const all: any[] = [];
   let from = 0;
   const PAGE = 1000;
   while (true) {
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await db
       .from("readings")
       .select("meter_id,value,recorded_at")
       .eq("site_id", siteId)
@@ -152,7 +137,7 @@ async function fetchReadings(siteId: string, fromIso: string, toIso: string) {
   return all;
 }
 
-async function buildDailyReport(site: any, meters: any[]) {
+async function buildDailyReport(db: Client, site: any, meters: any[]) {
   const tz = site.timezone || "UTC";
   const now = new Date();
   const yesterday = new Date(now.getTime() - 24 * 3600_000);
@@ -162,7 +147,7 @@ async function buildDailyReport(site: any, meters: any[]) {
   const fromIso = new Date(startLocal.toISOString()).toISOString();
   const toIso = new Date(endLocal.getTime() + 1).toISOString();
 
-  const readings = await fetchReadings(site.id, fromIso, toIso);
+  const readings = await fetchReadings(db, site.id, fromIso, toIso);
   const buckets = new Map<string, Map<string, number[]>>();
   for (const r of readings) {
     const d = new Date(r.recorded_at);
@@ -200,7 +185,7 @@ async function buildDailyReport(site: any, meters: any[]) {
   };
 }
 
-async function buildMonthlyReport(site: any, meters: any[]) {
+async function buildMonthlyReport(db: Client, site: any, meters: any[]) {
   const tz = site.timezone || "UTC";
   const now = new Date();
   const localToday = nowInTz(tz, now);
@@ -213,7 +198,7 @@ async function buildMonthlyReport(site: any, meters: any[]) {
   const fromIso = startLocal.toISOString();
   const toIso = endLocal.toISOString();
 
-  const readings = await fetchReadings(site.id, fromIso, toIso);
+  const readings = await fetchReadings(db, site.id, fromIso, toIso);
   const days = new Set<string>();
   const map = new Map<string, Map<string, number[]>>();
   for (const r of readings) {
@@ -252,30 +237,30 @@ async function buildMonthlyReport(site: any, meters: any[]) {
   };
 }
 
-async function processSite(site: any) {
+async function processSite(db: Client, site: any) {
   const tz = site.timezone || "UTC";
   const local = nowInTz(tz);
   if (local.hour !== site.report_hour) return { site: site.name, skipped: "hour-mismatch", localHour: local.hour };
   const recipients: string[] = (site.report_recipients ?? []).filter((e: string) => /.+@.+\..+/.test(e));
   if (recipients.length === 0) return { site: site.name, skipped: "no-recipients" };
 
-  const { data: meters, error: mErr } = await supabaseAdmin
+  const { data: meters, error: mErr } = await db
     .from("site_meters").select("*").eq("site_id", site.id).order("position");
   if (mErr) throw new Error(mErr.message);
 
   const results: any[] = [];
 
   if (site.daily_report_enabled) {
-    const r = await buildDailyReport(site, meters ?? []);
-    const { error: dupErr } = await supabaseAdmin
+    const r = await buildDailyReport(db, site, meters ?? []);
+    const { error: dupErr } = await db
       .from("report_send_log")
       .insert({ site_id: site.id, report_type: "daily", period_key: r.periodKey, recipients });
     if (!dupErr) {
       try {
-        await sendEmail(recipients, r.subject, r.text, r.attachment);
+        await sendEmail(db, recipients, r.subject, r.text, r.attachment);
         results.push({ type: "daily", period: r.periodKey, ok: true });
       } catch (e: any) {
-        await supabaseAdmin.from("report_send_log")
+        await db.from("report_send_log")
           .update({ status: "failed", error: e.message })
           .eq("site_id", site.id).eq("report_type", "daily").eq("period_key", r.periodKey);
         results.push({ type: "daily", period: r.periodKey, ok: false, error: e.message });
@@ -286,16 +271,16 @@ async function processSite(site: any) {
   }
 
   if (site.monthly_report_enabled && local.day === 1) {
-    const r = await buildMonthlyReport(site, meters ?? []);
-    const { error: dupErr } = await supabaseAdmin
+    const r = await buildMonthlyReport(db, site, meters ?? []);
+    const { error: dupErr } = await db
       .from("report_send_log")
       .insert({ site_id: site.id, report_type: "monthly", period_key: r.periodKey, recipients });
     if (!dupErr) {
       try {
-        await sendEmail(recipients, r.subject, r.text, r.attachment);
+        await sendEmail(db, recipients, r.subject, r.text, r.attachment);
         results.push({ type: "monthly", period: r.periodKey, ok: true });
       } catch (e: any) {
-        await supabaseAdmin.from("report_send_log")
+        await db.from("report_send_log")
           .update({ status: "failed", error: e.message })
           .eq("site_id", site.id).eq("report_type", "monthly").eq("period_key", r.periodKey);
         results.push({ type: "monthly", period: r.periodKey, ok: false, error: e.message });
@@ -312,17 +297,21 @@ export const Route = createFileRoute("/api/public/hooks/send-reports")({
   server: {
     handlers: {
       POST: async ({ request }) => {
+        const event = getEvent();
+        const env = (event?.context as any)?.cloudflare?.env as Env;
+        const db = getSupabaseAdmin(env);
+
         const url = new URL(request.url);
         const force = url.searchParams.get("force");
 
-        const { data: sites, error } = await supabaseAdmin.from("sites").select("*");
+        const { data: sites, error } = await db.from("sites").select("*");
         if (error) return Response.json({ error: error.message }, { status: 500 });
 
         const out: any[] = [];
         for (const site of sites ?? []) {
           if (force && site.id !== force) continue;
           try {
-            const r = await processSite(force ? { ...site, report_hour: nowInTz(site.timezone || "UTC").hour } : site);
+            const r = await processSite(db, force ? { ...site, report_hour: nowInTz(site.timezone || "UTC").hour } : site);
             out.push(r);
           } catch (e: any) {
             out.push({ site: site.name, error: e.message });

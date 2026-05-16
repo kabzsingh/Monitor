@@ -1,5 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { getSupabaseAdmin, type Env } from "@/lib/supabase";
+import { getApiKeyByHash, getMetersForSite, insertReading } from "@/lib/db";
+import { getEvent } from "vinxi/http";
 import crypto from "crypto";
 import { z } from "zod";
 
@@ -24,15 +26,32 @@ export const Route = createFileRoute("/api/public/ingest")({
     handlers: {
       OPTIONS: async () => new Response(null, { status: 204, headers: corsHeaders() }),
       POST: async ({ request }) => {
+        // Access Cloudflare environment via Vinxi event context
+        const event = getEvent();
+        const env = (event?.context as any)?.cloudflare?.env as Env;
+
+        if (!env?.SUPABASE_URL || !env?.SUPABASE_SERVICE_ROLE_KEY) {
+          return json({ error: "Server configuration missing" }, 500);
+        }
+
+        const db = getSupabaseAdmin(env);
+
         const apiKey =
           request.headers.get("x-site-api-key") ||
           request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || "";
         if (!apiKey) return json({ error: "Missing x-site-api-key" }, 401);
 
+        // Hash the API key to compare with stored hashes
         const hash = crypto.createHash("sha256").update(apiKey).digest("hex");
-        const { data: keyRow, error: keyErr } = await supabaseAdmin
-          .from("site_api_keys").select("site_id,revoked").eq("key_hash", hash).maybeSingle();
-        if (keyErr) return json({ error: keyErr.message }, 500);
+
+        let keyRow;
+        try {
+          keyRow = await getApiKeyByHash(db, hash);
+        } catch (e: any) {
+          if (e.code === 'PGRST116') return json({ error: "Invalid key" }, 401);
+          return json({ error: e.message }, 500);
+        }
+
         if (!keyRow || keyRow.revoked) return json({ error: "Invalid key" }, 401);
 
         let body: unknown;
@@ -42,28 +61,32 @@ export const Route = createFileRoute("/api/public/ingest")({
         const parsed = PayloadSchema.safeParse(body);
         if (!parsed.success) return json({ error: "Invalid payload", issues: parsed.error.flatten() }, 400);
 
-        const { data: meters, error: mErr } = await supabaseAdmin
-          .from("site_meters").select("id,device_key").eq("site_id", keyRow.site_id);
-        if (mErr) return json({ error: mErr.message }, 500);
-        const map = new Map(meters!.map((m) => [m.device_key, m.id]));
+        const meters = await getMetersForSite(db, keyRow.site_id);
+        const map = new Map(meters.map((m) => [m.device_key, m.id]));
 
-        const rows: { site_id: string; meter_id: string; value: number; recorded_at?: string }[] = [];
+        const rows: any[] = [];
         const unknown: string[] = [];
         for (const r of parsed.data.readings) {
           const meterId = map.get(r.device_key);
           if (!meterId) { unknown.push(r.device_key); continue; }
           rows.push({
-            site_id: keyRow.site_id, meter_id: meterId,
-            value: r.value, ...(r.recorded_at ? { recorded_at: r.recorded_at } : {}),
+            site_id: keyRow.site_id,
+            meter_id: meterId,
+            value: r.value,
+            ...(r.recorded_at ? { recorded_at: r.recorded_at } : {}),
           });
         }
+
         if (rows.length === 0) return json({ error: "No matching meters", unknown }, 400);
 
-        const { error: insErr } = await supabaseAdmin.from("readings").insert(rows);
+        // Insert readings using the db helper
+        const { error: insErr } = await db.from("readings").insert(rows);
         if (insErr) return json({ error: insErr.message }, 500);
 
-        await supabaseAdmin.from("site_api_keys")
-          .update({ last_used_at: new Date().toISOString() }).eq("key_hash", hash);
+        // Update last used timestamp
+        await db.from("site_api_keys")
+          .update({ last_used_at: new Date().toISOString() })
+          .eq("key_hash", hash);
 
         return json({ ok: true, accepted: rows.length, unknown });
       },

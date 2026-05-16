@@ -1,9 +1,18 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { getSupabaseAdmin, type Env } from "@/lib/supabase";
+import {
+  getUserRole,
+  getSmtpSettings as dbGetSmtpSettings,
+  upsertSmtpSettings as dbUpsertSmtpSettings,
+  createApiKey as dbCreateApiKey,
+  createSite,
+  createMeter
+} from "@/lib/db";
+import { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 import { z } from "zod";
+import { getEvent } from "vinxi/http";
 
 type AuthSupabase = SupabaseClient<Database>;
 
@@ -45,8 +54,10 @@ async function bootstrapViaRpc(supabase: AuthSupabase): Promise<{ granted: boole
 }
 
 /** Fallback when migration not applied yet — needs SUPABASE_SERVICE_ROLE_KEY in env. */
-async function bootstrapViaServiceRole(userId: string): Promise<{ granted: boolean; isAdmin: boolean }> {
-  const { count, error: cErr } = await supabaseAdmin
+async function bootstrapViaServiceRole(env: Env, userId: string): Promise<{ granted: boolean; isAdmin: boolean }> {
+  const dbAdmin = getSupabaseAdmin(env);
+
+  const { count, error: cErr } = await dbAdmin
     .from("user_roles")
     .select("*", { count: "exact", head: true })
     .eq("role", "admin");
@@ -54,16 +65,11 @@ async function bootstrapViaServiceRole(userId: string): Promise<{ granted: boole
   if (cErr) throw new Error("Database error while checking admins: " + cErr.message);
 
   if ((count ?? 0) > 0) {
-    const { data: me } = await supabaseAdmin
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", userId)
-      .eq("role", "admin")
-      .maybeSingle();
-    return { granted: false, isAdmin: !!me };
+    const roleRow = await getUserRole(dbAdmin, userId);
+    return { granted: false, isAdmin: roleRow?.role === "admin" };
   }
 
-  const { error } = await supabaseAdmin.from("user_roles").insert({ user_id: userId, role: "admin" });
+  const { error } = await dbAdmin.from("user_roles").insert({ user_id: userId, role: "admin" });
   if (error) throw new Error("Failed to grant admin role: " + error.message);
   return { granted: true, isAdmin: true };
 }
@@ -90,14 +96,13 @@ export const createSiteApiKey = createServerFn({ method: "POST" })
     const hash = await sha256(raw);
     const prefix = raw.slice(0, 12);
 
-    const { error: insertErr } = await context.supabase.from("site_api_keys").insert({
+    await dbCreateApiKey(context.supabase, {
       site_id: siteId,
       key_hash: hash,
       key_prefix: prefix,
       label: label || "ESP32",
     });
 
-    if (insertErr) throw new Error(insertErr.message);
     return { apiKey: raw, prefix };
   });
 
@@ -105,9 +110,7 @@ export const getSmtpSettings = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     await assertAdmin(context.supabase, context.userId);
-    const { data, error } = await context.supabase.from("smtp_settings").select("*").eq("id", true).maybeSingle();
-    if (error) throw new Error(error.message);
-    return data;
+    return await dbGetSmtpSettings(context.supabase);
   });
 
 export const updateSmtpSettings = createServerFn({ method: "POST" })
@@ -126,21 +129,22 @@ export const updateSmtpSettings = createServerFn({ method: "POST" })
       .parse(data);
 
     await assertAdmin(context.supabase, context.userId);
-    const { error } = await context.supabase.from("smtp_settings").upsert({
-      id: true,
+    await dbUpsertSmtpSettings(context.supabase, {
       ...parsed,
       updated_at: new Date().toISOString(),
     });
-    if (error) throw new Error(error.message);
     return { ok: true };
   });
 
 export const grantAdminBootstrap = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
+    const event = getEvent();
+    const env = (event?.context as any)?.cloudflare?.env as Env;
+
     try {
       // 1. Try using Service Role (Automated, bypasses RLS)
-      return await bootstrapViaServiceRole(context.userId);
+      return await bootstrapViaServiceRole(env, context.userId);
     } catch (svcErr: any) {
       // 2. If Service Role key is missing or blocked, try the RPC method
       console.warn("[Admin] Service role bootstrap failed, trying RPC:", svcErr.message);
@@ -161,8 +165,7 @@ export const seedDemoData = createServerFn({ method: "POST" })
     ];
 
     for (const s of sitesToCreate) {
-      const { data: site, error } = await context.supabase.from("sites").insert(s).select("id").single();
-      if (error) throw new Error(error.message);
+      const site = await createSite(context.supabase, s);
 
       const meters = [
         {
@@ -185,10 +188,9 @@ export const seedDemoData = createServerFn({ method: "POST" })
         },
       ];
 
-      const { error: mErr } = await context.supabase
-        .from("site_meters")
-        .insert(meters.map((m) => ({ ...m, site_id: site!.id })));
-      if (mErr) throw new Error(mErr.message);
+      for (const m of meters) {
+        await createMeter(context.supabase, { ...m, site_id: site!.id });
+      }
     }
     return { seeded: true };
   });
