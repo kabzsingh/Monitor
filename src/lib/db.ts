@@ -1,8 +1,17 @@
 import { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 
-// Using the Database type for better intellisense
 type Client = SupabaseClient<Database>;
+
+/**
+ * Robust SHA-256 hashing using Web Crypto API (native in Cloudflare Workers)
+ */
+export async function sha256(message: string) {
+  const msgUint8 = new TextEncoder().encode(message);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", msgUint8);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 // ── Sites ──────────────────────────────────────────────
 export async function getSites(db: Client) {
@@ -59,8 +68,8 @@ export async function deleteMeter(db: Client, id: string) {
 }
 
 // ── Site API Keys ──────────────────────────────────────
-export async function getApiKeyByHash(db: Client, keyHash: string) {
-  const { data, error } = await db.from("site_api_keys").select("*, sites(*)").eq("key_hash", keyHash).single();
+export async function getApiKeyByHash(db: Client, hash: string) {
+  const { data, error } = await db.from("site_api_keys").select("*, sites(*)").eq("key_hash", hash).single();
   if (error) throw error;
   return data;
 }
@@ -77,51 +86,20 @@ export async function createApiKey(db: Client, entry: Database["public"]["Tables
   return data;
 }
 
-export async function updateApiKey(db: Client, id: string, updates: Database["public"]["Tables"]["site_api_keys"]["Update"]) {
-  const { data, error } = await db.from("site_api_keys").update(updates).eq("id", id).select().single();
-  if (error) throw error;
-  return data;
-}
-
 export async function deleteApiKey(db: Client, id: string) {
   const { error } = await db.from("site_api_keys").delete().eq("id", id);
-  if (error) throw error;
-}
-
-// ── User Roles & Profiles ──────────────────────────────
-export async function getUserRole(db: Client, userId: string) {
-  const { data, error } = await db.from("user_roles").select("*").eq("user_id", userId).maybeSingle();
-  if (error) throw error;
-  return data;
-}
-
-export async function getProfile(db: Client, userId: string) {
-  const { data, error } = await db.from("profiles").select("*").eq("id", userId).single();
-  if (error) throw error;
-  return data;
-}
-
-// ── Site Operators (Assignments) ───────────────────────
-export async function getOperatorsForSite(db: Client, siteId: string) {
-  const { data, error } = await db.from("site_operators").select("*, profiles(*)").eq("site_id", siteId);
-  if (error) throw error;
-  return data;
-}
-
-export async function addOperatorToSite(db: Client, siteId: string, userId: string) {
-  const { data, error } = await db.from("site_operators").insert({ site_id: siteId, user_id: userId }).select().single();
-  if (error) throw error;
-  return data;
-}
-
-export async function removeOperatorFromSite(db: Client, siteId: string, userId: string) {
-  const { error } = await db.from("site_operators").delete().eq("site_id", siteId).eq("user_id", userId);
   if (error) throw error;
 }
 
 // ── Readings (live sensor data) ────────────────────────
 export async function insertReading(db: Client, reading: Database["public"]["Tables"]["readings"]["Insert"]) {
   const { data, error } = await db.from("readings").insert(reading).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function insertReadings(db: Client, readings: Database["public"]["Tables"]["readings"]["Insert"][]) {
+  const { data, error } = await db.from("readings").insert(readings).select();
   if (error) throw error;
   return data;
 }

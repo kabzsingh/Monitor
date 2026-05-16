@@ -1,33 +1,15 @@
 import { createServerFn } from '@tanstack/react-start'
 import { getCookie, setCookie, deleteCookie, getEvent } from 'vinxi/http'
-import { supabase } from '@/integrations/supabase/client'
+import { getSupabase, type Env } from './supabase'
 
 const TOKEN_COOKIE_NAME = 'sb-access-token'
 const REFRESH_COOKIE_NAME = 'sb-refresh-token'
 
-/**
- * Robust environment variable resolver for Cloudflare Workers, Node.js, and Vite.
- */
-function getEnv(key: string): string | undefined {
-  try {
-    const event = getEvent()
-    const cloudflareEnv = (event?.context as any)?.cloudflare?.env || {}
-    const processEnv = (globalThis as any).process?.env || {}
-
-    return (
-      cloudflareEnv[key] ||
-      cloudflareEnv[`VITE_${key}`] ||
-      processEnv[key] ||
-      processEnv[`VITE_${key}`]
-    )
-  } catch (e) {
-    const processEnv = (globalThis as any).process?.env || {}
-    return processEnv[key] || processEnv[`VITE_${key}`]
-  }
-}
-
 export const getSession = createServerFn({ method: 'GET' }).handler(async () => {
   const event = getEvent()
+  const env = (event?.context as any)?.cloudflare?.env as Env
+  const supabase = getSupabase(env)
+
   const accessToken = getCookie(event, TOKEN_COOKIE_NAME)
   const refreshToken = getCookie(event, REFRESH_COOKIE_NAME)
 
@@ -51,7 +33,10 @@ export const signIn = createServerFn({ method: 'POST' })
   .validator((d: { accessToken: string; refreshToken: string }) => d)
   .handler(async ({ data }) => {
     const event = getEvent()
-    const isProd = getEnv('NODE_ENV') === 'production'
+    const env = (event?.context as any)?.cloudflare?.env as Env
+
+    // Fallback to 'production' if not explicitly set, or check environment
+    const isProd = env?.NODE_ENV === 'production' || process.env.NODE_ENV === 'production'
 
     setCookie(event, TOKEN_COOKIE_NAME, data.accessToken, {
       path: '/',

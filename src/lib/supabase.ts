@@ -17,7 +17,6 @@ export function getSupabase(env: Env): SupabaseClient<Database> {
 
 /**
  * Creates a Supabase Admin client (Service Role) using the Cloudflare environment object.
- * Warning: Only use this in server-side contexts.
  */
 export function getSupabaseAdmin(env: Env): SupabaseClient<Database> {
   return createClient<Database>(env.SUPABASE_URL, env.SUPABASE_SERVICE_KEY);
