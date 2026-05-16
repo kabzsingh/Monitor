@@ -1,8 +1,28 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import nodemailer from "nodemailer";
+import { getEvent } from "vinxi/http";
 
-const GMAIL_GATEWAY = "https://connector-gateway.lovable.dev/google_mail/gmail/v1";
+/**
+ * Robust environment variable resolver for Cloudflare Workers, Node.js, and Vite.
+ */
+function getEnv(key: string): string | undefined {
+  try {
+    const event = getEvent();
+    const cloudflareEnv = (event?.context as any)?.cloudflare?.env || {};
+    const processEnv = (globalThis as any).process?.env || {};
+
+    return (
+      cloudflareEnv[key] ||
+      cloudflareEnv[`VITE_${key}`] ||
+      processEnv[key] ||
+      processEnv[`VITE_${key}`]
+    );
+  } catch (e) {
+    const processEnv = (globalThis as any).process?.env || {};
+    return processEnv[key] || processEnv[`VITE_${key}`];
+  }
+}
 
 function b64url(s: string) {
   return Buffer.from(s, "utf-8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -14,7 +34,7 @@ function buildRawWithAttachment(
   text: string,
   attachment: { filename: string; mime: string; content: string },
 ) {
-  const boundary = "lovable_" + Math.random().toString(36).slice(2);
+  const boundary = "report_" + Math.random().toString(36).slice(2);
   const headers = [
     `To: ${to.join(", ")}`,
     `Subject: =?UTF-8?B?${Buffer.from(subject, "utf-8").toString("base64")}?=`,
@@ -41,40 +61,13 @@ function buildRawWithAttachment(
   return b64url(headers + "\r\n\r\n" + body);
 }
 
-async function sendGmail(
-  to: string[],
-  subject: string,
-  text: string,
-  attachment: { filename: string; mime: string; content: string },
-) {
-  const LOVABLE_API_KEY = process.env.LOVABLE_API_KEY;
-  const GOOGLE_MAIL_API_KEY = process.env.GOOGLE_MAIL_API_KEY;
-  if (!LOVABLE_API_KEY || !GOOGLE_MAIL_API_KEY) {
-    throw new Error("SMTP not configured and Gmail credentials missing");
-  }
-  const raw = buildRawWithAttachment(to, subject, text, attachment);
-  const res = await fetch(`${GMAIL_GATEWAY}/users/me/messages/send`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${LOVABLE_API_KEY}`,
-      "X-Connection-Api-Key": GOOGLE_MAIL_API_KEY,
-    },
-    body: JSON.stringify({ raw }),
-  });
-  if (!res.ok) {
-    const t = await res.text();
-    throw new Error(`Gmail ${res.status}: ${t.slice(0, 300)}`);
-  }
-}
-
 async function sendEmail(
   to: string[],
   subject: string,
   text: string,
   attachment: { filename: string; mime: string; content: string },
 ) {
-  // Try fetching SMTP settings
+  // Try fetching SMTP settings from the database (Configured via Admin Console)
   const { data: smtp } = await supabaseAdmin.from("smtp_settings").select("*").eq("id", true).maybeSingle();
 
   if (smtp && smtp.host && smtp.user_email) {
@@ -104,12 +97,12 @@ async function sendEmail(
       });
       return;
     } catch (e: any) {
-      console.error("SMTP send failed, falling back to Gmail if available:", e);
+      console.error("SMTP send failed:", e);
+      throw e;
     }
+  } else {
+    throw new Error("No SMTP settings configured. Please set them up in the Admin Console.");
   }
-
-  // Fallback to Gmail connector
-  await sendGmail(to, subject, text, attachment);
 }
 
 // Returns { hour, dayOfMonth, ymd } in the given IANA timezone for a given instant.
@@ -161,11 +154,9 @@ async function fetchReadings(siteId: string, fromIso: string, toIso: string) {
 
 async function buildDailyReport(site: any, meters: any[]) {
   const tz = site.timezone || "UTC";
-  // yesterday in site tz
   const now = new Date();
   const yesterday = new Date(now.getTime() - 24 * 3600_000);
   const ymd = ymdInTz(tz, yesterday);
-  // start/end of that local day -> UTC bounds (approx via Date construction in tz)
   const startLocal = new Date(`${ymd}T00:00:00`);
   const endLocal = new Date(`${ymd}T23:59:59.999`);
   const fromIso = new Date(startLocal.toISOString()).toISOString();

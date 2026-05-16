@@ -80,11 +80,8 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { property: "og:description", content: "Live dashboard for wash counts, fresh water, and chemical levels across your sites." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
-      { name: "twitter:site", content: "@Lovable" },
       { name: "twitter:title", content: "WashGrid — Live Wash Site Dashboard" },
       { name: "twitter:description", content: "Live dashboard for wash counts, fresh water, and chemical levels across your sites." },
-      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/7196bd6b-66b1-4a97-9c3a-995ee2e02124/id-preview-6e7b61c8--75509eca-ed44-4b46-b9ba-562dd76d8a4e.lovable.app-1778169570002.png" },
-      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/7196bd6b-66b1-4a97-9c3a-995ee2e02124/id-preview-6e7b61c8--75509eca-ed44-4b46-b9ba-562dd76d8a4e.lovable.app-1778169570002.png" },
     ],
     links: [
       {

@@ -764,7 +764,7 @@ function ReportSettings({ site, onSaved }: { site: Site; onSaved: () => void }) 
 }
 
 function buildEsp32Sketch(site: Site, meters: Meter[]) {
-  const endpoint = `${typeof window !== "undefined" ? window.location.origin : "https://your-app.lovable.app"}/api/public/ingest`;
+  const endpoint = `${typeof window !== "undefined" ? window.location.origin : "https://your-deployment-url.com"}/api/public/ingest`;
   const meterLines = meters
     .map((m) => `  // ${m.name} (${m.meter_type}) — device_key: ${m.device_key}`)
     .join("\n");
