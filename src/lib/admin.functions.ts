@@ -12,6 +12,7 @@ import {
 import { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 import { z } from "zod";
+import { zodValidator } from "@tanstack/zod-adapter";
 
 type AuthSupabase = SupabaseClient<Database>;
 
@@ -80,16 +81,17 @@ async function bootstrapViaServiceRole(
 
 export const createSiteApiKey = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .handler(async ({ data, context }) => {
-    const parsed = z
-      .object({
+  .validator(
+    zodValidator(
+      z.object({
         siteId: z.string(),
         label: z.string().max(60).optional(),
       })
-      .parse(data);
-
+    )
+  )
+  .handler(async ({ data, context }) => {
     await assertAdmin(context.supabase, context.userId);
-    const { siteId, label } = parsed;
+    const { siteId, label } = data;
 
     const bytes = new Uint8Array(24);
     globalThis.crypto.getRandomValues(bytes);
@@ -119,9 +121,9 @@ export const getSmtpSettings = createServerFn({ method: "GET" })
 
 export const updateSmtpSettings = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .handler(async ({ data, context }) => {
-    const parsed = z
-      .object({
+  .validator(
+    zodValidator(
+      z.object({
         host: z.string(),
         port: z.number(),
         user_email: z.string().email(),
@@ -130,11 +132,12 @@ export const updateSmtpSettings = createServerFn({ method: "POST" })
         from_email: z.string().email(),
         encryption: z.enum(["tls", "ssl", "none"]),
       })
-      .parse(data);
-
+    )
+  )
+  .handler(async ({ data, context }) => {
     await assertAdmin(context.supabase, context.userId);
     await dbUpsertSmtpSettings(context.supabase, {
-      ...parsed,
+      ...data,
       updated_at: new Date().toISOString(),
     });
     return { ok: true };

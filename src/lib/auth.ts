@@ -1,5 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getServerContext } from "./server-utils";
+import { zodValidator } from "@tanstack/zod-adapter";
+import { z } from "zod";
 
 const TOKEN_COOKIE_NAME = "sb-access-token";
 const REFRESH_COOKIE_NAME = "sb-refresh-token";
@@ -27,7 +29,14 @@ export const getSession = createServerFn({ method: "GET" }).handler(async () => 
 });
 
 export const signIn = createServerFn({ method: "POST" })
-  .validator((d: { accessToken: string; refreshToken: string }) => d)
+  .validator(
+    zodValidator(
+      z.object({
+        accessToken: z.string(),
+        refreshToken: z.string(),
+      }),
+    ),
+  )
   .handler(async ({ data }) => {
     const { env, event, setCookie } = await getServerContext();
 

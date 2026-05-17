@@ -7,21 +7,21 @@ import { z } from "zod";
 // ── Sites ──────────────────────────────────────────────
 
 export const getSitesAction = createServerFn({ method: "GET" }).handler(async () => {
-  const { supabase } = getServerContext();
+  const { supabase } = await getServerContext();
   return db.getSites(supabase);
 });
 
 export const getSiteByIdAction = createServerFn({ method: "GET" })
-  .validator((id: string) => id)
+  .validator(zodValidator(z.string()))
   .handler(async ({ data: id }) => {
-    const { supabase } = getServerContext();
+    const { supabase } = await getServerContext();
     return db.getSiteById(supabase, id);
   });
 
 export const createSiteAction = createServerFn({ method: "POST" })
-  .validator((site: any) => site)
+  .validator(zodValidator(z.any()))
   .handler(async ({ data: site }) => {
-    const { supabaseAdmin } = getServerContext();
+    const { supabaseAdmin } = await getServerContext();
     return db.createSite(supabaseAdmin, site);
   });
 
@@ -29,15 +29,17 @@ export const createSiteAction = createServerFn({ method: "POST" })
 
 export const getReadingsAction = createServerFn({ method: "GET" })
   .validator(
-    z.object({
-      siteId: z.string(),
-      limit: z.number().optional(),
-      from: z.string().optional(),
-      to: z.string().optional(),
-    }),
+    zodValidator(
+      z.object({
+        siteId: z.string(),
+        limit: z.number().optional(),
+        from: z.string().optional(),
+        to: z.string().optional(),
+      }),
+    )
   )
   .handler(async ({ data }) => {
-    const { supabase } = getServerContext();
+    const { supabase } = await getServerContext();
     return db.getReadingsForSite(supabase, data.siteId, {
       limit: data.limit,
       from: data.from,
@@ -46,17 +48,17 @@ export const getReadingsAction = createServerFn({ method: "GET" })
   });
 
 export const getLatestReadingAction = createServerFn({ method: "GET" })
-  .validator((siteId: string) => siteId)
+  .validator(zodValidator(z.string()))
   .handler(async ({ data: siteId }) => {
-    const { supabase } = getServerContext();
+    const { supabase } = await getServerContext();
     return db.getLatestReading(supabase, siteId);
   });
 
 // ── Meters ─────────────────────────────────────────────
 
 export const getMetersAction = createServerFn({ method: "GET" })
-  .validator((siteId: string) => siteId)
+  .validator(zodValidator(z.string()))
   .handler(async ({ data: siteId }) => {
-    const { supabase } = getServerContext();
+    const { supabase } = await getServerContext();
     return db.getMetersForSite(supabase, siteId);
   });
